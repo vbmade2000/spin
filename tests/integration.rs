@@ -372,6 +372,11 @@ mod integration_tests {
                     Request::new(Method::Get, "/outbound-allowed"),
                     Response::new_with_body(200, "Hello, Fermyon!\n"),
                 )?;
+                assert_spin_request(
+                    spin,
+                    Request::new(Method::Get, "/outbound-allowed-alt"),
+                    Response::new_with_body(200, "Hello, Fermyon!\n"),
+                )?;
 
                 assert_spin_request(
                     spin,
