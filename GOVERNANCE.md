@@ -20,6 +20,8 @@ The Spin project consists of several codebases with different release cycles. Th
     - [Spin Command Trigger](https://github.com/fermyon/spin-trigger-command)
     - [Spin SQS Trigger](https://github.com/fermyon/spin-trigger-sqs)
     - [Spin Cron Trigger](https://github.com/fermyon/spin-trigger-cron)
+- Other
+    - [Spin Fileserver](https://github.com/fermyon/spin-fileserver)
 
 Each repository is subject to the same overall governance model, but has different teams of people (“maintainers”) with permissions and access to the repository. This is meant to increase diversity of maintainers in the Spin project and also increases the velocity of code changes. Major changes and features to the project including additions to the repository list above are to be proposed through the [Spin Improvement Proposal](docs/content/sips/index.md) process.
 
