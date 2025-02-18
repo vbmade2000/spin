@@ -19,6 +19,13 @@ allowed_http_hosts = ["self"]
 route = "/outbound-allowed/..."
 
 [[component]]
+id = "outbound-http-allowed-alt"
+source = "%{source=outbound-http}"
+allowed_http_hosts = ["self.alt"]
+[component.trigger]
+route = "/outbound-allowed-alt/..."
+
+[[component]]
 id = "outbound-http-not-allowed"
 source = "%{source=outbound-http}"
 [component.trigger]

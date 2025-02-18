@@ -200,7 +200,7 @@ impl HostConfig {
             return Ok(Self::Any);
         }
 
-        if host == "self" {
+        if host == "self" || host == "self.alt" {
             return Ok(Self::ToSelf);
         }
 
