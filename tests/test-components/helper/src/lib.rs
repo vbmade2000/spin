@@ -159,11 +159,17 @@ macro_rules! ensure_matches {
 
 #[macro_export]
 macro_rules! ensure_eq {
-    ($expr1:expr, $expr2:expr) => {
-        if $expr1 != $expr2 {
-            $crate::bail!("`{}` != `{}`", stringify!($expr1), stringify!($expr2));
+    ($expr1:expr, $expr2:expr) => {{
+        let a = $expr1;
+        let b = $expr2;
+        if a != b {
+            $crate::bail!(
+                "`{}` != `{}`\n{a:?} != {b:?}",
+                stringify!($expr1),
+                stringify!($expr2),
+            );
         }
-    };
+    }};
 }
 
 #[macro_export]

@@ -132,23 +132,6 @@ async fn send_request_impl(
 
     spin_telemetry::inject_trace_context(&mut request);
 
-    if let Some(interceptor) = request_interceptor {
-        let intercept_request = std::mem::take(&mut request).into();
-        match interceptor.intercept(intercept_request).await? {
-            InterceptOutcome::Continue(req) => {
-                request = req.into_hyper_request();
-            }
-            InterceptOutcome::Complete(resp) => {
-                let resp = IncomingResponse {
-                    resp,
-                    worker: None,
-                    between_bytes_timeout: config.between_bytes_timeout,
-                };
-                return Ok(Ok(resp));
-            }
-        }
-    }
-
     let host = request.uri().host().unwrap_or_default();
     let tls_client_config = component_tls_configs.get_client_config(host).clone();
 
@@ -187,6 +170,23 @@ async fn send_request_impl(
 
         let path_and_query = request.uri().path_and_query().cloned();
         *request.uri_mut() = origin.into_uri(path_and_query);
+    }
+
+    if let Some(interceptor) = request_interceptor {
+        let intercept_request = std::mem::take(&mut request).into();
+        match interceptor.intercept(intercept_request).await? {
+            InterceptOutcome::Continue(req) => {
+                request = req.into_hyper_request();
+            }
+            InterceptOutcome::Complete(resp) => {
+                let resp = IncomingResponse {
+                    resp,
+                    worker: None,
+                    between_bytes_timeout: config.between_bytes_timeout,
+                };
+                return Ok(Ok(resp));
+            }
+        }
     }
 
     let authority = request.uri().authority().context("authority not set")?;
