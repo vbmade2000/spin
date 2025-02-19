@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use helper::{ensure, ensure_eq, ensure_ok, ensure_some};
+use helper::{ensure, ensure_eq, ensure_matches, ensure_ok, ensure_some};
 use spin_sdk::{
     http::{IntoResponse, Request},
     http_component,
@@ -32,5 +32,17 @@ async fn handle_front_impl(_req: Request) -> Result<impl IntoResponse, String> {
 
     res.headers_mut()
         .append("spin-component", ensure_ok!("internal-http-front-component".try_into()));
+
+    // Double-check that we can only send requests to allowed hosts.
+    ensure_matches!(
+        spin_sdk::http::send::<_, spin_sdk::http::Response>(spin_sdk::http::Request::new(
+            spin_sdk::http::Method::Get,
+            "http://back.spin.internal/hello/from/middle"
+        ))
+        .await,
+        Err(spin_sdk::http::SendError::Http(
+            spin_sdk::http::Error::UnexpectedError(_)
+        )),
+    );
     Ok(res)
 }
