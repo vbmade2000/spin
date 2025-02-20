@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use spin_common::arg_parser::parse_kv;
-use spin_oci::{client::InferPredefinedAnnotations, Client};
+use spin_oci::{client::InferPredefinedAnnotations, Client, ComposeMode};
 use std::{io::Read, path::PathBuf, time::Duration};
 
 /// Commands for working with OCI registries to distribute applications.
@@ -49,6 +49,15 @@ pub struct Push {
     )]
     pub insecure: bool,
 
+    /// Compose component dependencies before pushing the application.
+    ///
+    /// The default is to compose before pushing, which maximises compatibility with
+    /// different Spin runtime hosts. Turning composition off can optimise
+    /// bandwidth for shared dependencies, but makes the pushed image incompatible
+    /// with hosts that cannot carry out composition themselves.
+    #[clap(long = "compose", default_value_t = true)]
+    pub compose: bool,
+
     /// Specifies to perform `spin build` before pushing the application.
     #[clap(long, takes_value = false, env = ALWAYS_BUILD_ENV)]
     pub build: bool,
@@ -88,12 +97,19 @@ impl Push {
 
         let _spinner = create_dotted_spinner(2000, "Pushing app to the Registry".to_owned());
 
+        let compose_mode = if self.compose {
+            ComposeMode::All
+        } else {
+            ComposeMode::Skip
+        };
+
         let digest = client
             .push(
                 &app_file,
                 &self.reference,
                 annotations,
                 InferPredefinedAnnotations::All,
+                compose_mode,
             )
             .await?;
         match digest {
