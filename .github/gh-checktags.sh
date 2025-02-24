@@ -10,7 +10,7 @@ which gh &> /dev/null || {
   exit 1
 }
 
-tags=$(gh release list --repo fermyon/spin --exclude-pre-releases --exclude-drafts | grep -v TITLE | awk '{print $1}')
+tags=$(gh release list --repo spinframework/spin --exclude-pre-releases --exclude-drafts | grep -v TITLE | awk '{print $1}')
 
 exit_code=0
 for tag in $tags; do

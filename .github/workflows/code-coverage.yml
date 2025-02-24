@@ -1,7 +1,7 @@
 name: Code coverage
 on:
   # Currently disabled due to cargo-tarpaulin timing out on the GH Ubuntu hosts.
-  # Ref: https://github.com/fermyon/spin/issues/1350
+  # Ref: https://github.com/spinframework/spin/issues/1350
   # Will need to investigate and tune usage/invocation to get passing before re-enabling.
   # schedule:
   #   - cron: '0 0 * * *'
@@ -10,7 +10,7 @@ jobs:
   build-rust:
     name: Build Spin
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'fermyon' }} || ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.repository_owner == 'spinframework' }} || ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v3
 
@@ -33,7 +33,7 @@ jobs:
   code-coverage:
     name: Run code coverage
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'fermyon' }} || ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.repository_owner == 'spinframework' }} || ${{ github.event_name == 'workflow_dispatch' }}
     needs: build-rust
     steps:
       - uses: actions/checkout@v3
@@ -57,12 +57,12 @@ jobs:
         env:
           RUST_LOG: spin=trace
 
-      # Only attempt to upload to codecov.io if the repo owner is fermyon.
+      # Only attempt to upload to codecov.io if the repo owner is spinframework.
       # This allows forks to run code coverage manually, without needing
       # to have a codecov token for uploading.
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
-        if: ${{ github.ref == 'refs/heads/main' && github.repository_owner == 'fermyon' }}
+        if: ${{ github.ref == 'refs/heads/main' && github.repository_owner == 'spinframework' }}
         with:
           fail_ci_if_error: true
           verbose: true

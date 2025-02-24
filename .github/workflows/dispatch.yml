@@ -9,12 +9,12 @@ jobs:
   dispatch-rust-docs:
     name: Dispatch rust-docs spin-update event
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'fermyon' }}
+    if: ${{ github.repository_owner == 'spinframework' }}
     steps:
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.DEST_REPO_ACCESS_TOKEN }}
-          repository: fermyon/rust-docs
+          repository: spinframework/rust-docs
           event-type: spin-update
           client-payload: '{"ref": "${{ github.ref_name }}"}'
