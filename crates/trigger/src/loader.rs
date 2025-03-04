@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use spin_common::{ui::quoted_path, url::parse_file_url};
 use spin_compose::ComponentSourceLoaderFs;
 use spin_core::{async_trait, wasmtime, Component};
-use spin_factors::AppComponent;
+use spin_factors::{AppComponent, RuntimeFactors};
 
 #[derive(Default)]
 pub struct ComponentLoader {
@@ -68,7 +68,7 @@ impl ComponentLoader {
 }
 
 #[async_trait]
-impl spin_factors_executor::ComponentLoader for ComponentLoader {
+impl<T: RuntimeFactors, U> spin_factors_executor::ComponentLoader<T, U> for ComponentLoader {
     async fn load_component(
         &self,
         engine: &wasmtime::Engine,

@@ -52,7 +52,7 @@ impl<T: RuntimeFactors, U: Send + 'static> FactorsExecutor<T, U> {
         self: Arc<Self>,
         app: App,
         runtime_config: T::RuntimeConfig,
-        component_loader: &impl ComponentLoader,
+        component_loader: &impl ComponentLoader<T, U>,
     ) -> anyhow::Result<FactorsExecutorApp<T, U>> {
         let configured_app = self
             .factors
@@ -63,15 +63,14 @@ impl<T: RuntimeFactors, U: Send + 'static> FactorsExecutor<T, U> {
             hooks.configure_app(&configured_app).await?;
         }
 
-        let mut component_instance_pres = HashMap::new();
+        let components = configured_app.app().components();
+        let mut component_instance_pres = HashMap::with_capacity(components.len());
 
-        for app_component in configured_app.app().components() {
-            let component = component_loader
-                .load_component(self.core_engine.as_ref(), &app_component)
+        for component in components {
+            let instance_pre = component_loader
+                .load_instance_pre(&self.core_engine, &component)
                 .await?;
-            let instance_pre = self.core_engine.instantiate_pre(&component)?;
-
-            component_instance_pres.insert(app_component.id().to_string(), instance_pre);
+            component_instance_pres.insert(component.id().to_string(), instance_pre);
         }
 
         Ok(FactorsExecutorApp {
@@ -102,13 +101,23 @@ where
 
 /// A ComponentLoader is responsible for loading Wasmtime [`Component`]s.
 #[async_trait]
-pub trait ComponentLoader {
+pub trait ComponentLoader<T: RuntimeFactors, U>: Sync {
     /// Loads a [`Component`] for the given [`AppComponent`].
     async fn load_component(
         &self,
         engine: &spin_core::wasmtime::Engine,
         component: &AppComponent,
     ) -> anyhow::Result<Component>;
+
+    /// Loads [`InstancePre`] for the given [`AppComponent`].
+    async fn load_instance_pre(
+        &self,
+        engine: &spin_core::Engine<InstanceState<T::InstanceState, U>>,
+        component: &AppComponent,
+    ) -> anyhow::Result<spin_core::InstancePre<InstanceState<T::InstanceState, U>>> {
+        let component = self.load_component(engine.as_ref(), component).await?;
+        engine.instantiate_pre(&component)
+    }
 }
 
 type InstancePre<T, U> =
@@ -344,7 +353,7 @@ mod tests {
     struct DummyComponentLoader;
 
     #[async_trait]
-    impl ComponentLoader for DummyComponentLoader {
+    impl ComponentLoader<TestFactors, ()> for DummyComponentLoader {
         async fn load_component(
             &self,
             engine: &spin_core::wasmtime::Engine,
