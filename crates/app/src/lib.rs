@@ -84,7 +84,7 @@ impl App {
     }
 
     /// Returns an iterator of [`AppComponent`]s defined for this app.
-    pub fn components(&self) -> impl Iterator<Item = AppComponent<'_>> {
+    pub fn components(&self) -> impl ExactSizeIterator<Item = AppComponent<'_>> {
         self.locked
             .components
             .iter()

@@ -309,7 +309,7 @@ impl<T: Trigger<B::Factors>, B: RuntimeFactorsBuilder> TriggerAppBuilder<T, B> {
         app: App,
         common_options: FactorsConfig,
         options: B::CliArgs,
-        loader: &impl ComponentLoader,
+        loader: &impl ComponentLoader<B::Factors, T::InstanceState>,
     ) -> anyhow::Result<TriggerApp<T, B::Factors>> {
         let mut core_engine_builder = {
             self.trigger.update_core_config(&mut self.engine_config)?;
@@ -340,7 +340,7 @@ impl<T: Trigger<B::Factors>, B: RuntimeFactorsBuilder> TriggerAppBuilder<T, B> {
         app: App,
         common_options: FactorsConfig,
         options: B::CliArgs,
-        loader: &impl ComponentLoader,
+        loader: &impl ComponentLoader<B::Factors, T::InstanceState>,
     ) -> anyhow::Result<impl Future<Output = anyhow::Result<()>>> {
         let configured_app = self.build(app, common_options, options, loader).await?;
         Ok(self.trigger.run(configured_app))
