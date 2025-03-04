@@ -55,6 +55,8 @@ impl std::error::Error for WasiLibc377Bug {}
 fn parse_clang_version(ver: &str) -> Option<(u16, u16, u16)> {
     // Strip optional trailing detail after space
     let ver = ver.split(' ').next().unwrap();
+    // Strip optional -wasi-sdk suffix
+    let ver = ver.strip_suffix("-wasi-sdk").unwrap_or(ver);
     let mut parts = ver.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
@@ -80,6 +82,10 @@ mod tests {
             ),
             (
                 r#"(module (@producers (processed-by "clang" "15.0.7")))"#,
+                true,
+            ),
+            (
+                r#"(module (@producers (processed-by "clang" "18.1.2-wasi-sdk (https://github.com/llvm/llvm-project 26a1d6601d727a96f4301d0d8647b5a42760ae0c)")))"#,
                 true,
             ),
             (
