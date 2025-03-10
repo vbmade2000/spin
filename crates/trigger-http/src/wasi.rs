@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 
 use anyhow::{anyhow, Context, Result};
@@ -144,7 +145,11 @@ impl HttpExecutor for WasiHttpExecutor {
                         Ok(())
                     }
                     .map_err(|e: anyhow::Error| {
-                        tracing::warn!("component error after response: {e:?}");
+                        if std::io::stderr().is_terminal() {
+                            tracing::error!("Component error after response started. The response may not be fully sent: {e:?}");
+                        } else {
+                            terminal::warn!("Component error after response started: {e:?}");
+                        }
                     }),
                 );
 
