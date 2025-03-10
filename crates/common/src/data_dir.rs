@@ -25,7 +25,9 @@ fn package_manager_data_dir() -> Option<PathBuf> {
             .map(|p| p.starts_with(&brew_prefix))
             .unwrap_or(false)
         {
-            let data_dir = Path::new(&brew_prefix).join("etc").join("fermyon-spin");
+            let data_dir = Path::new(&brew_prefix)
+                .join("etc")
+                .join("spinframework-spin");
             return Some(data_dir);
         }
     }
