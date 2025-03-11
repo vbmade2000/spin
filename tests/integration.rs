@@ -321,8 +321,8 @@ mod integration_tests {
                     )
                 };
 
-                test("golang", "Hello World!\n")?;
-                test("rust", "Hello World!")?;
+                test("golang", "Hello Fermyon!\n")?;
+                test("rust", "Hello, Fermyon")?;
                 test("javascript", "Hello from JS-SDK")?;
                 test("typescript", "Hello from TS-SDK")?;
                 Ok(())
