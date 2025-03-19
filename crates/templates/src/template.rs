@@ -617,7 +617,10 @@ impl Condition {
 fn parse_string_constraints(raw: &RawParameter) -> anyhow::Result<StringConstraints> {
     let regex = raw.pattern.as_ref().map(|re| Regex::new(re)).transpose()?;
 
-    Ok(StringConstraints { regex })
+    Ok(StringConstraints {
+        regex,
+        allowed_values: raw.allowed_values.clone(),
+    })
 }
 
 fn read_install_record(layout: &TemplateLayout) -> InstalledFrom {
