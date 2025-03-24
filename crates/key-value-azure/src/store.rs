@@ -158,7 +158,7 @@ impl Store for AzureCosmosStore {
 
         if key.contains(|c| illegal_chars.contains(&c)) {
             return Err(Error::Other(format!(
-                "Key contains an illegal character. Allowed characters do not include: {}",
+                "Key contains an illegal character. Keys must not include any of: {}",
                 illegal_chars.iter().collect::<String>()
             )));
         }
