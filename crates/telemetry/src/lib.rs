@@ -47,7 +47,7 @@ pub use propagation::inject_trace_context;
 /// ```no_run
 /// spin_telemetry::metrics::monotonic_counter!(spin.metric_name = 1, metric_attribute = "value");
 /// ```
-pub fn init(spin_version: String) -> anyhow::Result<ShutdownGuard> {
+pub fn init(spin_version: String) -> anyhow::Result<()> {
     // This layer will print all tracing library log messages to stderr.
     let fmt_layer = fmt::layer()
         .with_writer(std::io::stderr)
@@ -91,18 +91,5 @@ pub fn init(spin_version: String) -> anyhow::Result<ShutdownGuard> {
         logs::init_otel_logging_backend(spin_version)?;
     }
 
-    Ok(ShutdownGuard)
-}
-
-/// An RAII implementation for connection to open telemetry services.
-///
-/// Shutdown of the open telemetry services will happen on `Drop`.
-#[must_use]
-pub struct ShutdownGuard;
-
-impl Drop for ShutdownGuard {
-    fn drop(&mut self) {
-        // Give tracer provider a chance to flush any pending traces.
-        opentelemetry::global::shutdown_tracer_provider();
-    }
+    Ok(())
 }
