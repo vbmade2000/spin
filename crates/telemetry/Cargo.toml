@@ -10,7 +10,7 @@ http0 = { version = "0.2.9", package = "http" }
 http1 = { version = "1.0.0", package = "http" }
 opentelemetry = { workspace = true }
 opentelemetry-appender-tracing = "0.28"
-opentelemetry-otlp = { version = "0.28", features = ["http-proto", "http", "reqwest-client", "grpc-tonic"] }
+opentelemetry-otlp = { version = "0.28", features = ["grpc-tonic"] }
 opentelemetry_sdk = { workspace = true }
 terminal = { path = "../terminal" }
 tracing = { workspace = true }

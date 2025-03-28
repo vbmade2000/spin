@@ -1,5 +1,6 @@
 use std::io::IsTerminal;
 
+use anyhow::Context;
 use env::otel_logs_enabled;
 use env::otel_metrics_enabled;
 use env::otel_tracing_enabled;
@@ -65,13 +66,19 @@ pub fn init(spin_version: String) -> anyhow::Result<()> {
         );
 
     let otel_tracing_layer = if otel_tracing_enabled() {
-        Some(traces::otel_tracing_layer(spin_version.clone())?)
+        Some(
+            traces::otel_tracing_layer(spin_version.clone())
+                .context("failed to initialize otel tracing")?,
+        )
     } else {
         None
     };
 
     let otel_metrics_layer = if otel_metrics_enabled() {
-        Some(metrics::otel_metrics_layer(spin_version.clone())?)
+        Some(
+            metrics::otel_metrics_layer(spin_version.clone())
+                .context("failed to initialize otel metrics")?,
+        )
     } else {
         None
     };
@@ -88,7 +95,8 @@ pub fn init(spin_version: String) -> anyhow::Result<()> {
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     if otel_logs_enabled() {
-        logs::init_otel_logging_backend(spin_version)?;
+        logs::init_otel_logging_backend(spin_version)
+            .context("failed to initialize otel logging")?;
     }
 
     Ok(())
