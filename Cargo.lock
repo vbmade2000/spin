@@ -8117,9 +8117,11 @@ dependencies = [
  "routefinder",
  "serde",
  "spin-app",
+ "spin-factor-outbound-http",
  "toml",
  "tracing",
  "wasmtime",
+ "wasmtime-wasi",
  "wasmtime-wasi-http",
 ]
 
