@@ -110,7 +110,7 @@ fn ensure_allowed_databases_are_configured(
         let prologue = vec![
             "One or more components use SQLite databases which are not defined.",
             "Check the spelling, or pass a runtime configuration file that defines these stores.",
-            "See https://developer.fermyon.com/spin/dynamic-configuration#sqlite-storage-runtime-configuration",
+            "See https://spinframework.dev/dynamic-configuration#sqlite-storage-runtime-configuration",
             "Details:",
         ];
         let lines: Vec<_> = prologue

@@ -2,7 +2,7 @@
 
 The [Spin Docs](https://spin.fermyon.dev) website is deployed via the [deploy-website.yaml](../.github/workflows/deploy-website.yml) GitHub workflow.
 
-(Note: currently this website consists of redirects to the Spin Docs hosted on Fermyon's [Developer site](https://developer.fermyon.com/spin))
+(Note: currently this website consists of redirects to the Spin Docs hosted at [spinframework.dev](https://spinframework.dev))
 
 ## Auto Deploys
 
