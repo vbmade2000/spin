@@ -61,7 +61,7 @@ impl HttpExecutor for SpinHttpExecutor {
 
         // Preparing to remove the params field. We are leaving it in place for now
         // to avoid breaking the ABI, but no longer pass or accept values in it.
-        // https://github.com/fermyon/spin/issues/663
+        // https://github.com/spinframework/spin/issues/663
         let params = vec![];
 
         let uri = match parts.uri.path_and_query() {

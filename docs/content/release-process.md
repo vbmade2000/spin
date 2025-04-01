@@ -55,7 +55,7 @@ Ensure that CI/CD is green for this commit, specifically the [Build](https://git
 
 1. Once the version bump PR is approved and merged, confirm that CI is green for that merge commit.
 
-1. Create a new tag from the merge commit. The tag should begin with a `v`, followed by the version number, e.g. `v2.0.0`. Then, push the tag to the `fermyon/spin` origin repo.
+1. Create a new tag from the merge commit. The tag should begin with a `v`, followed by the version number, e.g. `v2.0.0`. Then, push the tag to the `spinframework/spin` origin repo.
 
     As an example, via the `git` CLI:
 
@@ -67,7 +67,7 @@ Ensure that CI/CD is green for this commit, specifically the [Build](https://git
     # Create a GPG-signed and annotated tag
     git tag -s -m "Spin v2.0.0" v2.0.0
 
-    # Push the tag to the remote corresponding to fermyon/spin (here 'origin')
+    # Push the tag to the remote corresponding to spinframework/spin (here 'origin')
     git push origin v2.0.0
     ```
 
