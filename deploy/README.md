@@ -10,7 +10,7 @@ The production version of the website is deployed whenever commits are pushed to
 
 ## Manual Deploys
 
-Deployments may also be [triggered manually](https://github.com/fermyon/spin/actions/workflows/deploy-website.yml), providing a choice of `ref` and `sha`.
+Deployments may also be [triggered manually](https://github.com/spinframework/spin/actions/workflows/deploy-website.yml), providing a choice of `ref` and `sha`.
 
 ## Nomad jobs
 

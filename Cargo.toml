@@ -7,11 +7,11 @@ license = { workspace = true }
 
 [workspace.package]
 version = "3.3.0-pre0"
-authors = ["Fermyon Engineering <engineering@fermyon.com>"]
+authors = ["Spin Framework Contributors"]
 edition = "2021"
 license = "Apache-2.0 WITH LLVM-exception"
-homepage = "https://developer.fermyon.com/spin"
-repository = "https://github.com/fermyon/spin"
+homepage = "https://spinframework.dev"
+repository = "https://github.com/spinframework/spin"
 rust-version = "1.81"
 
 [dependencies]

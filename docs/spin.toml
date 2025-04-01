@@ -195,31 +195,31 @@ environment = { DESTINATION = "https://spinframework.dev/template-authoring" }
 
 [component.redirect-sips-index]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/index.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/index.md" }
 
 [component.redirect-sip001]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/001-spin-deploy.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/001-spin-deploy.md" }
 
 [component.redirect-sip002]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/002-app-config.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/002-app-config.md" }
 
 [component.redirect-sip003]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/003-trigger-executors.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/003-trigger-executors.md" }
 
 [component.redirect-sip004]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/004-spin-build.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/004-spin-build.md" }
 
 [component.redirect-sip005]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/005-manifest-redesign.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/005-manifest-redesign.md" }
 
 [component.redirect-sip006]
 source = "modules/redirect.wasm"
-environment = { DESTINATION = "https://github.com/fermyon/spin/blob/main/docs/content/sips/006-spin-plugins.md" }
+environment = { DESTINATION = "https://github.com/spinframework/spin/blob/main/docs/content/sips/006-spin-plugins.md" }
 
 [component.redirect-contributing]
 source = "modules/redirect.wasm"

@@ -78,7 +78,7 @@ impl Default for Config {
         inner.epoch_interruption(true);
         inner.wasm_component_model(true);
         // If targeting musl, disable native unwind to address this issue:
-        // https://github.com/fermyon/spin/issues/2889
+        // https://github.com/spinframework/spin/issues/2889
         // TODO: remove this when wasmtime is updated to >= v27.0.0
         #[cfg(all(target_os = "linux", target_env = "musl"))]
         inner.native_unwind_info(false);
