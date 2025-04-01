@@ -5,7 +5,7 @@
   </picture>
   <p>Spin is a framework for building, deploying, and running fast, secure, and composable cloud microservices with WebAssembly.</p>
       <a href="https://github.com/fermyon/spin/actions/workflows/build.yml"><img src="https://github.com/fermyon/spin/actions/workflows/build.yml/badge.svg" alt="build status" /></a>
-      <a href="https://discord.gg/eGN8saYqCk"><img alt="Discord" src="https://img.shields.io/discord/926888690310053918?label=Discord"></a>
+      <a href="https://cloud-native.slack.com/archives/C089NJ9G1V0"><img alt="Slack" src="https://img.shields.io/badge/slack-spin-green.svg?logo=slack"></a>
 </div>
 
 ## What is Spin?
@@ -115,10 +115,9 @@ The [Spin Project Meeting agenda](https://docs.google.com/document/d/1EG392gb8Eg
 
 You can find the contributing guide [here](https://developer.fermyon.com/spin/contributing).
 
-Fermyon also hosts a Discord server, where we discuss anything Spin: [Discord server](https://discord.gg/eGN8saYqCk).
-
 ## Stay in Touch
+
 Follow us on Twitter: [@spinframework](https://twitter.com/spinframework)
 
-You can join the Spin community in our [Discord server](https://discord.gg/eGN8saYqCk) where you can ask questions, get help, and show off the cool things you are doing with Spin!
+You can join the Spin community in the [Spin CNCF Slack channel](https://cloud-native.slack.com/archives/C089NJ9G1V0) where you can ask questions, get help, and show off the cool things you are doing with Spin!
 
