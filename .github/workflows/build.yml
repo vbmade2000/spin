@@ -22,7 +22,7 @@ env:
 jobs:
   dependency-review:
     name: Review new dependencies for known vulnerabilities
-    runs-on: "ubuntu-20.04"
+    runs-on: "ubuntu-22.04"
     if: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: 'Checkout Repository'
@@ -32,7 +32,7 @@ jobs:
 
   lint-rust:
     name: Lint Rust
-    runs-on: "ubuntu-20.04"
+    runs-on: "ubuntu-22.04"
     permissions:
       ## Allow this job to potentially cancel the running workflow (on failure)
       actions: write
@@ -55,7 +55,7 @@ jobs:
   ## This is separated out to remove full integration tests dependencies on windows/mac builds
   build-rust-ubuntu:
     name: Build Spin Ubuntu
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
 
@@ -79,7 +79,7 @@ jobs:
 
   build-spin-static:
     name: Build Spin static
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         config:
@@ -225,7 +225,7 @@ jobs:
       matrix:
         config:
           - {
-              os: "ubuntu-20.04",
+              os: "ubuntu-22.04",
               arch: "amd64",
               extension: "",
               # Ubuntu 22.04 no longer ships libssl1.1, so we statically
@@ -235,7 +235,7 @@ jobs:
               targetDir: "target/release",
             }
           - {
-              os: "ubuntu-20.04",
+              os: "ubuntu-22.04",
               arch: "aarch64",
               extension: "",
               extraArgs: "--features openssl/vendored --target aarch64-unknown-linux-gnu",

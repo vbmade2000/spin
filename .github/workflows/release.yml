@@ -26,7 +26,7 @@ jobs:
       matrix:
         config:
           - {
-              os: "ubuntu-20.04",
+              os: "ubuntu-22.04",
               arch: "amd64",
               extension: "",
               # Ubuntu 22.04 no longer ships libssl1.1, so we statically
@@ -36,7 +36,7 @@ jobs:
               targetDir: "target/release",
             }
           - {
-              os: "ubuntu-20.04",
+              os: "ubuntu-22.04",
               arch: "aarch64",
               extension: "",
               extraArgs: "--features openssl/vendored --target aarch64-unknown-linux-gnu",
@@ -265,7 +265,7 @@ jobs:
   ## statically linked spin binaries
   build-spin-static:
     name: Build Spin static
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     permissions:
       # cosign uses the GitHub OIDC token
       id-token: write
@@ -363,7 +363,7 @@ jobs:
           client-payload: '{"version": "${{ github.ref_name }}"}'
 
   docker:
-    runs-on: "ubuntu-20.04"
+    runs-on: "ubuntu-22.04"
     needs: [build-and-sign, build-spin-static]
     # Only build/push Docker images if this is a v* tag or if this is main/canary
     # i.e. skip for v* release branches
