@@ -26,7 +26,7 @@ pub struct GenerateReference {
 
 impl GenerateReference {
     pub async fn run(&self, app: clap::Command<'_>) -> anyhow::Result<()> {
-        let markdown = clap_markdown::help_markdown_command(&app);
+        let markdown = crate::clap_markdown::help_markdown_command(&app);
         match &self.output {
             Some(path) => std::fs::write(path, markdown)?,
             None => println!("{markdown}"),
