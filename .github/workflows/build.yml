@@ -201,6 +201,7 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.22'
+          cache-dependency-path: "**/go.sum"  # To suppress warning: https://github.com/actions/setup-go/issues/427
       - uses: acifani/setup-tinygo@v2
         with:
           tinygo-version: '0.35.0'
