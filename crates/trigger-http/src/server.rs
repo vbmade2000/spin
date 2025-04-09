@@ -77,7 +77,8 @@ impl<F: RuntimeFactors> HttpServer<F> {
         let component_routes = component_trigger_configs
             .iter()
             .map(|(component_id, config)| (component_id.as_str(), &config.route));
-        let (router, duplicate_routes) = Router::build("/", component_routes)?;
+        let mut duplicate_routes = Vec::new();
+        let router = Router::build("/", component_routes, Some(&mut duplicate_routes))?;
         if !duplicate_routes.is_empty() {
             tracing::error!(
                 "The following component routes are duplicates and will never be used:"
