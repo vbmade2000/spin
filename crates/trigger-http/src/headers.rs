@@ -177,7 +177,7 @@ mod tests {
             .uri(req_uri)
             .body("")?;
 
-        let (router, _) = Router::build("/", [("DUMMY", &trigger_route.into())])?;
+        let router = Router::build("/", [("DUMMY", &trigger_route.into())], None)?;
         let route_match = router.route("/foo/bar")?;
 
         let default_headers = compute_default_headers(req.uri(), host, &route_match, client_addr)?;
@@ -233,7 +233,7 @@ mod tests {
             .uri(req_uri)
             .body("")?;
 
-        let (router, _) = Router::build("/", [("DUMMY", &trigger_route.into())])?;
+        let router = Router::build("/", [("DUMMY", &trigger_route.into())], None)?;
         let route_match = router.route("/foo/42/bar")?;
 
         let default_headers = compute_default_headers(req.uri(), host, &route_match, client_addr)?;

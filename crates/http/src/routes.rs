@@ -43,10 +43,14 @@ pub struct DuplicateRoute {
 
 impl Router {
     /// Builds a router based on application configuration.
+    ///
+    /// `duplicate_routes` is an optional mutable reference to a vector of `DuplicateRoute`
+    /// that will be populated with any duplicate routes found during the build process.
     pub fn build<'a>(
         base: &str,
         component_routes: impl IntoIterator<Item = (&'a str, &'a HttpTriggerRouteConfig)>,
-    ) -> Result<(Self, Vec<DuplicateRoute>)> {
+        mut duplicate_routes: Option<&mut Vec<DuplicateRoute>>,
+    ) -> Result<Self> {
         // Some information we need to carry between stages of the builder.
         struct RoutingEntry<'a> {
             based_route: String,
@@ -55,7 +59,6 @@ impl Router {
         }
 
         let mut routes = IndexMap::new();
-        let mut duplicates = vec![];
 
         // Filter out private endpoints and capture the routes.
         let routes_iter = component_routes
@@ -72,19 +75,24 @@ impl Router {
                         Some(Err(anyhow!("route must be a string pattern or '{{ private = true }}': component '{component_id}' has {{ private = false }}")))
                     }
                 }
-            })
-            .collect::<Result<Vec<_>>>()?;
+            });
 
         // Remove duplicates.
         for re in routes_iter {
-            let effective_id = re.component_id.to_string();
-            let replaced = routes.insert(re.raw_route, re);
-            if let Some(replaced) = replaced {
-                duplicates.push(DuplicateRoute {
-                    route: replaced.based_route,
-                    replaced_id: replaced.component_id.to_string(),
-                    effective_id,
-                });
+            let re = re?;
+            if let Some(replaced) = routes.insert(re.raw_route, re) {
+                if let Some(duplicate_routes) = &mut duplicate_routes {
+                    let effective_id = routes
+                        .get(replaced.raw_route)
+                        .unwrap() // Safe because we just inserted it
+                        .component_id
+                        .to_owned();
+                    duplicate_routes.push(DuplicateRoute {
+                        route: replaced.based_route,
+                        replaced_id: replaced.component_id.to_owned(),
+                        effective_id,
+                    });
+                }
             }
         }
 
@@ -115,7 +123,7 @@ impl Router {
             router: std::sync::Arc::new(rf),
         };
 
-        Ok((router, duplicates))
+        Ok(router)
     }
 
     fn parse_route(based_route: &str) -> Result<(routefinder::RouteSpec, ParsedRoute), String> {
@@ -329,9 +337,10 @@ mod route_tests {
 
     #[test]
     fn test_router_exact() -> Result<()> {
-        let (r, _dups) = Router::build(
+        let r = Router::build(
             "/",
             [("foo", &"/foo".into()), ("foobar", &"/foo/bar".into())],
+            None,
         )?;
 
         assert_eq!(r.route("/foo")?.component_id(), "foo");
@@ -341,9 +350,10 @@ mod route_tests {
 
     #[test]
     fn test_router_respects_base() -> Result<()> {
-        let (r, _dups) = Router::build(
+        let r = Router::build(
             "/base",
             [("foo", &"/foo".into()), ("foobar", &"/foo/bar".into())],
+            None,
         )?;
 
         assert_eq!(r.route("/base/foo")?.component_id(), "foo");
@@ -353,7 +363,7 @@ mod route_tests {
 
     #[test]
     fn test_router_wildcard() -> Result<()> {
-        let (r, _dups) = Router::build("/", [("all", &"/...".into())])?;
+        let r = Router::build("/", [("all", &"/...".into())], None)?;
 
         assert_eq!(r.route("/foo/bar")?.component_id(), "all");
         assert_eq!(r.route("/abc/")?.component_id(), "all");
@@ -367,7 +377,7 @@ mod route_tests {
 
     #[test]
     fn wildcard_routes_use_custom_display() {
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/whee/...".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/whee/...".into())], None).unwrap();
 
         let (route, component_id) = routes.routes().next().unwrap();
 
@@ -377,13 +387,14 @@ mod route_tests {
 
     #[test]
     fn test_router_respects_longest_match() -> Result<()> {
-        let (r, _dups) = Router::build(
+        let r = Router::build(
             "/",
             [
                 ("one_wildcard", &"/one/...".into()),
                 ("onetwo_wildcard", &"/one/two/...".into()),
                 ("onetwothree_wildcard", &"/one/two/three/...".into()),
             ],
+            None,
         )?;
 
         assert_eq!(
@@ -392,13 +403,14 @@ mod route_tests {
         );
 
         // ...regardless of order
-        let (r, _dups) = Router::build(
+        let r = Router::build(
             "/",
             [
                 ("onetwothree_wildcard", &"/one/two/three/...".into()),
                 ("onetwo_wildcard", &"/one/two/...".into()),
                 ("one_wildcard", &"/one/...".into()),
             ],
+            None,
         )?;
 
         assert_eq!(
@@ -410,9 +422,10 @@ mod route_tests {
 
     #[test]
     fn test_router_exact_beats_wildcard() -> Result<()> {
-        let (r, _dups) = Router::build(
+        let r = Router::build(
             "/",
             [("one_exact", &"/one".into()), ("wildcard", &"/...".into())],
+            None,
         )?;
 
         assert_eq!(r.route("/one")?.component_id(), "one_exact");
@@ -422,7 +435,8 @@ mod route_tests {
 
     #[test]
     fn sensible_routes_are_reachable() {
-        let (routes, duplicates) = Router::build(
+        let mut duplicates = Vec::new();
+        let routes = Router::build(
             "/",
             vec![
                 ("/", &"/".into()),
@@ -430,6 +444,7 @@ mod route_tests {
                 ("/bar", &"/bar".into()),
                 ("/whee/...", &"/whee/...".into()),
             ],
+            Some(&mut duplicates),
         )
         .unwrap();
 
@@ -439,7 +454,7 @@ mod route_tests {
 
     #[test]
     fn order_of_reachable_routes_is_preserved() {
-        let (routes, _) = Router::build(
+        let routes = Router::build(
             "/",
             vec![
                 ("comp-/", &"/".into()),
@@ -447,6 +462,7 @@ mod route_tests {
                 ("comp-/bar", &"/bar".into()),
                 ("comp-/whee/...", &"/whee/...".into()),
             ],
+            None,
         )
         .unwrap();
 
@@ -458,7 +474,8 @@ mod route_tests {
 
     #[test]
     fn duplicate_routes_are_unreachable() {
-        let (routes, duplicates) = Router::build(
+        let mut duplicates = Vec::new();
+        let routes = Router::build(
             "/",
             vec![
                 ("comp-/", &"/".into()),
@@ -466,6 +483,7 @@ mod route_tests {
                 ("comp-second /foo", &"/foo".into()),
                 ("comp-/whee/...", &"/whee/...".into()),
             ],
+            Some(&mut duplicates),
         )
         .unwrap();
 
@@ -475,7 +493,8 @@ mod route_tests {
 
     #[test]
     fn duplicate_routes_last_one_wins() {
-        let (routes, duplicates) = Router::build(
+        let mut duplicates = Vec::new();
+        let routes = Router::build(
             "/",
             vec![
                 ("comp-/", &"/".into()),
@@ -483,6 +502,7 @@ mod route_tests {
                 ("comp-second /foo", &"/foo".into()),
                 ("comp-/whee/...", &"/whee/...".into()),
             ],
+            Some(&mut duplicates),
         )
         .unwrap();
 
@@ -493,7 +513,8 @@ mod route_tests {
 
     #[test]
     fn duplicate_routes_reporting_is_faithful() {
-        let (_, duplicates) = Router::build(
+        let mut duplicates = Vec::new();
+        let _ = Router::build(
             "/",
             vec![
                 ("comp-first /", &"/".into()),
@@ -505,6 +526,7 @@ mod route_tests {
                 ("comp-first /whee/...", &"/whee/...".into()),
                 ("comp-second /whee/...", &"/whee/...".into()),
             ],
+            Some(&mut duplicates),
         )
         .unwrap();
 
@@ -523,7 +545,7 @@ mod route_tests {
 
     #[test]
     fn unroutable_routes_are_skipped() {
-        let (routes, _) = Router::build(
+        let routes = Router::build(
             "/",
             vec![
                 ("comp-/", &"/".into()),
@@ -534,6 +556,7 @@ mod route_tests {
                 ),
                 ("comp-/whee/...", &"/whee/...".into()),
             ],
+            None,
         )
         .unwrap();
 
@@ -554,6 +577,7 @@ mod route_tests {
                 ),
                 ("comp-/whee/...", &"/whee/...".into()),
             ],
+            None,
         )
         .expect_err("should not have accepted a 'route = true'");
 
@@ -562,11 +586,11 @@ mod route_tests {
 
     #[test]
     fn trailing_wildcard_is_captured() {
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/...".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/...".into())], None).unwrap();
         let m = routes.route("/1/2/3").expect("/1/2/3 should have matched");
         assert_eq!("/1/2/3", m.trailing_wildcard());
 
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/1/...".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/1/...".into())], None).unwrap();
         let m = routes.route("/1/2/3").expect("/1/2/3 should have matched");
         assert_eq!("/2/3", m.trailing_wildcard());
     }
@@ -576,7 +600,7 @@ mod route_tests {
         // We test this because it is the existing Spin behaviour but is *not*
         // how routefinder behaves by default (routefinder prefers to ignore trailing
         // slashes).
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/test/...".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/test/...".into())], None).unwrap();
         let m = routes.route("/test").expect("/test should have matched");
         assert_eq!("", m.trailing_wildcard());
         let m = routes.route("/test/").expect("/test/ should have matched");
@@ -593,38 +617,41 @@ mod route_tests {
 
     #[test]
     fn named_wildcard_is_captured() {
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/1/:two/3".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/1/:two/3".into())], None).unwrap();
         let m = routes.route("/1/2/3").expect("/1/2/3 should have matched");
         assert_eq!("2", m.named_wildcards()["two"]);
 
-        let (routes, _dups) = Router::build("/", vec![("comp", &"/1/:two/...".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/1/:two/...".into())], None).unwrap();
         let m = routes.route("/1/2/3").expect("/1/2/3 should have matched");
         assert_eq!("2", m.named_wildcards()["two"]);
     }
 
     #[test]
     fn reserved_routes_are_reserved() {
-        let (routes, _dups) =
-            Router::build("/", vec![("comp", &"/.well-known/spin/...".into())]).unwrap();
+        let routes =
+            Router::build("/", vec![("comp", &"/.well-known/spin/...".into())], None).unwrap();
         assert!(routes.contains_reserved_route());
 
-        let (routes, _dups) =
-            Router::build("/", vec![("comp", &"/.well-known/spin/fie".into())]).unwrap();
+        let routes =
+            Router::build("/", vec![("comp", &"/.well-known/spin/fie".into())], None).unwrap();
         assert!(routes.contains_reserved_route());
     }
 
     #[test]
     fn unreserved_routes_are_unreserved() {
-        let (routes, _dups) =
-            Router::build("/", vec![("comp", &"/.well-known/spindle/...".into())]).unwrap();
+        let routes = Router::build(
+            "/",
+            vec![("comp", &"/.well-known/spindle/...".into())],
+            None,
+        )
+        .unwrap();
         assert!(!routes.contains_reserved_route());
 
-        let (routes, _dups) =
-            Router::build("/", vec![("comp", &"/.well-known/spi/...".into())]).unwrap();
+        let routes =
+            Router::build("/", vec![("comp", &"/.well-known/spi/...".into())], None).unwrap();
         assert!(!routes.contains_reserved_route());
 
-        let (routes, _dups) =
-            Router::build("/", vec![("comp", &"/.well-known/spin".into())]).unwrap();
+        let routes = Router::build("/", vec![("comp", &"/.well-known/spin".into())], None).unwrap();
         assert!(!routes.contains_reserved_route());
     }
 }
