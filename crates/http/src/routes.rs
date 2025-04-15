@@ -173,11 +173,12 @@ impl Router {
             .ok_or_else(|| anyhow!("Cannot match route for path {path}"))?;
 
         let route_handler = best_match.handler();
+        let captures = best_match.captures();
 
         Ok(RouteMatch {
             inner: RouteMatchKind::Real {
                 route_handler,
-                best_match,
+                captures,
                 path,
             },
         })
@@ -253,13 +254,12 @@ impl<'router, 'path> RouteMatch<'router, 'path> {
     }
 
     /// The matched route, excluding any trailing wildcard, combined with the base.
-    pub fn based_route_or_prefix(&self) -> String {
+    pub fn based_route_or_prefix(&self) -> &str {
         self.inner
             .route_handler()
             .based_route
             .strip_suffix("/...")
             .unwrap_or(&self.inner.route_handler().based_route)
-            .to_string()
     }
 
     /// The matched route, as originally written in the manifest.
@@ -268,22 +268,21 @@ impl<'router, 'path> RouteMatch<'router, 'path> {
     }
 
     /// The matched route, excluding any trailing wildcard.
-    pub fn raw_route_or_prefix(&self) -> String {
+    pub fn raw_route_or_prefix(&self) -> &str {
         self.inner
             .route_handler()
             .raw_route
             .strip_suffix("/...")
             .unwrap_or(&self.inner.route_handler().raw_route)
-            .to_string()
     }
 
     /// The named wildcards captured from the path, if any
-    pub fn named_wildcards(&self) -> HashMap<String, String> {
+    pub fn named_wildcards(&self) -> HashMap<&str, &str> {
         self.inner.named_wildcards()
     }
 
     /// The trailing wildcard part of the path, if any
-    pub fn trailing_wildcard(&self) -> String {
+    pub fn trailing_wildcard(&self) -> Cow<'_, str> {
         self.inner.trailing_wildcard()
     }
 }
@@ -304,7 +303,7 @@ enum RouteMatchKind<'router, 'path> {
         /// The route handler that matched the path.
         route_handler: &'router RouteHandler,
         /// The best match for the path.
-        best_match: routefinder::Match<'router, 'path, RouteHandler>,
+        captures: routefinder::Captures<'router, 'path>,
         /// The path that was matched.
         path: &'path str,
     },
@@ -320,44 +319,37 @@ impl<'router, 'path> RouteMatchKind<'router, 'path> {
     }
 
     /// The named wildcards captured from the path, if any
-    pub fn named_wildcards(&self) -> HashMap<String, String> {
-        let Self::Real { best_match, .. } = &self else {
+    pub fn named_wildcards(&self) -> HashMap<&str, &str> {
+        let Self::Real { captures, .. } = &self else {
             return HashMap::new();
         };
-        best_match
-            .captures()
-            .iter()
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect()
+        captures.iter().collect()
     }
 
     /// The trailing wildcard part of the path, if any
-    pub fn trailing_wildcard(&self) -> String {
-        let (best_match, path) = match self {
+    pub fn trailing_wildcard(&self) -> Cow<'_, str> {
+        let (captures, path) = match self {
             // If we have a synthetic match, we already have the trailing wildcard.
             Self::Synthetic {
                 trailing_wildcard, ..
-            } => return trailing_wildcard.clone(),
-            Self::Real {
-                best_match, path, ..
-            } => (best_match, path),
+            } => return trailing_wildcard.into(),
+            Self::Real { captures, path, .. } => (captures, path),
         };
 
-        best_match
-            .captures()
+        captures
             .wildcard()
             .map(|s|
             // Backward compatibility considerations - Spin has traditionally
             // captured trailing slashes, but routefinder does not.
             match (s.is_empty(), path.ends_with('/')) {
                 // route: /foo/..., path: /foo
-                (true, false) => s.to_owned(),
+                (true, false) => s.into(),
                 // route: /foo/..., path: /foo/
-                (true, true) => "/".to_owned(),
+                (true, true) => "/".into(),
                 // route: /foo/..., path: /foo/bar
-                (false, false) => format!("/{s}"),
+                (false, false) => format!("/{s}").into(),
                 // route: /foo/..., path: /foo/bar/
-                (false, true) => format!("/{s}/"),
+                (false, true) => format!("/{s}/").into(),
             })
             .unwrap_or_default()
     }
