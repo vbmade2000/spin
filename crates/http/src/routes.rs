@@ -165,19 +165,21 @@ impl Router {
     /// by matching wildcard patterns with the longest matching prefix.
     pub fn route<'path, 'router: 'path>(
         &'router self,
-        p: &'path str,
+        path: &'path str,
     ) -> Result<RouteMatch<'router, 'path>> {
         let best_match = self
             .router
-            .best_match(p)
-            .ok_or_else(|| anyhow!("Cannot match route for path {p}"))?;
+            .best_match(path)
+            .ok_or_else(|| anyhow!("Cannot match route for path {path}"))?;
 
         let route_handler = best_match.handler();
 
         Ok(RouteMatch {
-            route_handler: Cow::Borrowed(route_handler),
-            best_match: Some((p, best_match)),
-            trailing_wildcard: None,
+            inner: RouteMatchKind::Real {
+                route_handler,
+                best_match,
+                path,
+            },
         })
     }
 }
@@ -220,12 +222,7 @@ impl fmt::Display for ParsedRoute {
 
 /// A routing match for a URL.
 pub struct RouteMatch<'router, 'path> {
-    /// The route handler that matched the path.
-    route_handler: Cow<'router, RouteHandler>,
-    /// An optional best match for the path.
-    best_match: Option<(&'path str, routefinder::Match<'router, 'path, RouteHandler>)>,
-    /// An optional trailing wildcard part of the path used by the synthetic match.
-    trailing_wildcard: Option<String>,
+    inner: RouteMatchKind<'router, 'path>,
 }
 
 impl<'router, 'path> RouteMatch<'router, 'path> {
@@ -233,53 +230,98 @@ impl<'router, 'path> RouteMatch<'router, 'path> {
     /// Used in service chaining.
     pub fn synthetic(component_id: String, path: String) -> Self {
         Self {
-            route_handler: Cow::Owned(RouteHandler {
-                component_id,
-                based_route: "/...".into(),
-                raw_route: "/...".into(),
-                parsed_based_route: ParsedRoute::TrailingWildcard(String::new()),
-            }),
-            best_match: None,
-            trailing_wildcard: Some(path),
+            inner: RouteMatchKind::Synthetic {
+                route_handler: RouteHandler {
+                    component_id,
+                    based_route: "/...".into(),
+                    raw_route: "/...".into(),
+                    parsed_based_route: ParsedRoute::TrailingWildcard(String::new()),
+                },
+                trailing_wildcard: path,
+            },
         }
     }
 
     /// The matched component.
     pub fn component_id(&self) -> &str {
-        &self.route_handler.component_id
+        &self.inner.route_handler().component_id
     }
 
     /// The matched route, as originally written in the manifest, combined with the base.
     pub fn based_route(&self) -> &str {
-        &self.route_handler.based_route
+        &self.inner.route_handler().based_route
     }
 
     /// The matched route, excluding any trailing wildcard, combined with the base.
     pub fn based_route_or_prefix(&self) -> String {
-        self.route_handler
+        self.inner
+            .route_handler()
             .based_route
             .strip_suffix("/...")
-            .unwrap_or(&self.route_handler.based_route)
+            .unwrap_or(&self.inner.route_handler().based_route)
             .to_string()
     }
 
     /// The matched route, as originally written in the manifest.
     pub fn raw_route(&self) -> &str {
-        &self.route_handler.raw_route
+        &self.inner.route_handler().raw_route
     }
 
     /// The matched route, excluding any trailing wildcard.
     pub fn raw_route_or_prefix(&self) -> String {
-        self.route_handler
+        self.inner
+            .route_handler()
             .raw_route
             .strip_suffix("/...")
-            .unwrap_or(&self.route_handler.raw_route)
+            .unwrap_or(&self.inner.route_handler().raw_route)
             .to_string()
     }
 
     /// The named wildcards captured from the path, if any
     pub fn named_wildcards(&self) -> HashMap<String, String> {
-        let Some((_, best_match)) = &self.best_match else {
+        self.inner.named_wildcards()
+    }
+
+    /// The trailing wildcard part of the path, if any
+    pub fn trailing_wildcard(&self) -> String {
+        self.inner.trailing_wildcard()
+    }
+}
+
+/// The kind of route match that was made.
+///
+/// Can either be real based on the routefinder or synthetic based on hardcoded results.
+enum RouteMatchKind<'router, 'path> {
+    /// A synthetic match as if the given path was matched against the wildcard route.
+    Synthetic {
+        /// The route handler that matched the path.
+        route_handler: RouteHandler,
+        /// The trailing wildcard part of the path
+        trailing_wildcard: String,
+    },
+    /// A real match.
+    Real {
+        /// The route handler that matched the path.
+        route_handler: &'router RouteHandler,
+        /// The best match for the path.
+        best_match: routefinder::Match<'router, 'path, RouteHandler>,
+        /// The path that was matched.
+        path: &'path str,
+    },
+}
+
+impl<'router, 'path> RouteMatchKind<'router, 'path> {
+    /// The route handler that matched the path.
+    fn route_handler(&self) -> &RouteHandler {
+        match self {
+            RouteMatchKind::Synthetic { route_handler, .. } => route_handler,
+            RouteMatchKind::Real { route_handler, .. } => route_handler,
+        }
+    }
+
+    /// The named wildcards captured from the path, if any
+    pub fn named_wildcards(&self) -> HashMap<String, String> {
+        let Self::Real { best_match, .. } = &self else {
             return HashMap::new();
         };
         best_match
@@ -291,15 +333,16 @@ impl<'router, 'path> RouteMatch<'router, 'path> {
 
     /// The trailing wildcard part of the path, if any
     pub fn trailing_wildcard(&self) -> String {
-        // If we have a trailing wildcard, return it.
-        if let Some(wildcard) = &self.trailing_wildcard {
-            return wildcard.clone();
+        let (best_match, path) = match self {
+            // If we have a synthetic match, we already have the trailing wildcard.
+            Self::Synthetic {
+                trailing_wildcard, ..
+            } => return trailing_wildcard.clone(),
+            Self::Real {
+                best_match, path, ..
+            } => (best_match, path),
         };
 
-        // Otherwise, we need to extract it from the best match if we have it.
-        let Some((path, best_match)) = &self.best_match else {
-            return String::new();
-        };
         best_match
             .captures()
             .wildcard()
