@@ -602,7 +602,7 @@ mod integration_tests {
             &[],
             prebuild,
             HashMap::default(),
-            "hello universe",
+            "Hello, Spin!",
         )
     }
 
@@ -622,7 +622,7 @@ mod integration_tests {
             &[],
             prebuild,
             HashMap::default(),
-            "hello universe",
+            "Hello, Spin!",
         )
     }
 
