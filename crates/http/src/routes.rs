@@ -226,7 +226,7 @@ pub struct RouteMatch<'router, 'path> {
     inner: RouteMatchKind<'router, 'path>,
 }
 
-impl<'router, 'path> RouteMatch<'router, 'path> {
+impl RouteMatch<'_, '_> {
     /// A synthetic match as if the given path was matched against the wildcard route.
     /// Used in service chaining.
     pub fn synthetic(component_id: String, path: String) -> Self {
@@ -309,7 +309,7 @@ enum RouteMatchKind<'router, 'path> {
     },
 }
 
-impl<'router, 'path> RouteMatchKind<'router, 'path> {
+impl RouteMatchKind<'_, '_> {
     /// The route handler that matched the path.
     fn route_handler(&self) -> &RouteHandler {
         match self {

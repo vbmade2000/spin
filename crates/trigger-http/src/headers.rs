@@ -25,12 +25,16 @@ pub const RAW_COMPONENT_ROUTE: [&str; 2] = ["SPIN_RAW_COMPONENT_ROUTE", "X_RAW_C
 pub const BASE_PATH: [&str; 2] = ["SPIN_BASE_PATH", "X_BASE_PATH"];
 pub const CLIENT_ADDR: [&str; 2] = ["SPIN_CLIENT_ADDR", "X_CLIENT_ADDR"];
 
+// Header key/value pairs that use copy on write to avoid allocation
+pub type HeaderPair<'a> = ([Cow<'static, str>; 2], Cow<'a, str>);
+
+/// Compute the default headers to be passed to the component.
 pub fn compute_default_headers<'a>(
     uri: &Uri,
     host: &str,
     route_match: &'a RouteMatch,
     client_addr: SocketAddr,
-) -> anyhow::Result<Vec<([Cow<'static, str>; 2], Cow<'a, str>)>> {
+) -> anyhow::Result<Vec<HeaderPair<'a>>> {
     fn owned(strs: &[&'static str; 2]) -> [Cow<'static, str>; 2] {
         [strs[0].into(), strs[1].into()]
     }

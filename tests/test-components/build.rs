@@ -58,7 +58,7 @@ fn main() {
             .join("debug")
             .join(format!("{binary_name}.wasm"));
 
-        let adapter_version = package.split('v').last().and_then(|v| match v {
+        let adapter_version = package.split('v').next_back().and_then(|v| match v {
             // Only allow these versions through
             "0.2.0-rc-2023-11-10" | "0.2.0" => Some(v),
             _ => None,

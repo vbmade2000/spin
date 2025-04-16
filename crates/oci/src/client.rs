@@ -801,8 +801,8 @@ pub async fn unpack_archive_layer(
 fn digest_from_url(manifest_url: &str) -> Option<String> {
     // The URL is in the form "https://host/v2/refname/manifests/sha256:..."
     let manifest_url = Url::parse(manifest_url).ok()?;
-    let segments = manifest_url.path_segments()?;
-    let last = segments.last()?;
+    let mut segments = manifest_url.path_segments()?;
+    let last = segments.next_back()?;
     if last.contains(':') {
         Some(last.to_owned())
     } else {
