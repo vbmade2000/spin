@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Result};
 use indexmap::IndexMap;
-use std::{collections::HashMap, fmt};
+use std::{borrow::Cow, collections::HashMap, fmt};
 
 use crate::config::HttpTriggerRouteConfig;
 
@@ -22,9 +22,9 @@ struct RouteHandler {
     /// The component ID that the route maps to.
     component_id: String,
     /// The route, including any application base.
-    based_route: String,
+    based_route: Cow<'static, str>,
     /// The route, not including any application base.
-    raw_route: String,
+    raw_route: Cow<'static, str>,
     /// The route, including any application base and capturing information about whether it has a trailing wildcard.
     /// (This avoids re-parsing the route string.)
     parsed_based_route: ParsedRoute,
@@ -111,8 +111,8 @@ impl Router {
 
             let handler = RouteHandler {
                 component_id: re.component_id.to_string(),
-                based_route: re.based_route,
-                raw_route: re.raw_route.to_string(),
+                based_route: re.based_route.into(),
+                raw_route: re.raw_route.to_string().into(),
                 parsed_based_route: parsed,
             };
 
@@ -163,37 +163,24 @@ impl Router {
     /// If multiple components could potentially handle the same request based on their
     /// defined routes, components with matching exact routes take precedence followed
     /// by matching wildcard patterns with the longest matching prefix.
-    pub fn route(&self, p: &str) -> Result<RouteMatch> {
+    pub fn route<'path, 'router: 'path>(
+        &'router self,
+        path: &'path str,
+    ) -> Result<RouteMatch<'router, 'path>> {
         let best_match = self
             .router
-            .best_match(p)
-            .ok_or_else(|| anyhow!("Cannot match route for path {p}"))?;
+            .best_match(path)
+            .ok_or_else(|| anyhow!("Cannot match route for path {path}"))?;
 
-        let route_handler = best_match.handler().clone();
-        let named_wildcards = best_match
-            .captures()
-            .iter()
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect();
-        let trailing_wildcard = best_match.captures().wildcard().map(|s|
-            // Backward compatibility considerations - Spin has traditionally
-            // captured trailing slashes, but routefinder does not.
-            match (s.is_empty(), p.ends_with('/')) {
-                // route: /foo/..., path: /foo
-                (true, false) => s.to_owned(),
-                // route: /foo/..., path: /foo/
-                (true, true) => "/".to_owned(),
-                // route: /foo/..., path: /foo/bar
-                (false, false) => format!("/{s}"),
-                // route: /foo/..., path: /foo/bar/
-                (false, true) => format!("/{s}/"),
-            }
-        );
+        let route_handler = best_match.handler();
+        let captures = best_match.captures();
 
         Ok(RouteMatch {
-            route_handler,
-            named_wildcards,
-            trailing_wildcard,
+            inner: RouteMatchKind::Real {
+                route_handler,
+                captures,
+                path,
+            },
         })
     }
 }
@@ -235,69 +222,136 @@ impl fmt::Display for ParsedRoute {
 }
 
 /// A routing match for a URL.
-pub struct RouteMatch {
-    route_handler: RouteHandler,
-    named_wildcards: HashMap<String, String>,
-    trailing_wildcard: Option<String>,
+pub struct RouteMatch<'router, 'path> {
+    inner: RouteMatchKind<'router, 'path>,
 }
 
-impl RouteMatch {
+impl RouteMatch<'_, '_> {
     /// A synthetic match as if the given path was matched against the wildcard route.
     /// Used in service chaining.
-    pub fn synthetic(component_id: &str, path: &str) -> Self {
+    pub fn synthetic(component_id: String, path: String) -> Self {
         Self {
-            route_handler: RouteHandler {
-                component_id: component_id.to_string(),
-                based_route: "/...".to_string(),
-                raw_route: "/...".to_string(),
-                parsed_based_route: ParsedRoute::TrailingWildcard(String::new()),
+            inner: RouteMatchKind::Synthetic {
+                route_handler: RouteHandler {
+                    component_id,
+                    based_route: "/...".into(),
+                    raw_route: "/...".into(),
+                    parsed_based_route: ParsedRoute::TrailingWildcard(String::new()),
+                },
+                trailing_wildcard: path,
             },
-            named_wildcards: Default::default(),
-            trailing_wildcard: Some(path.to_string()),
         }
     }
 
     /// The matched component.
     pub fn component_id(&self) -> &str {
-        &self.route_handler.component_id
+        &self.inner.route_handler().component_id
     }
 
     /// The matched route, as originally written in the manifest, combined with the base.
     pub fn based_route(&self) -> &str {
-        &self.route_handler.based_route
+        &self.inner.route_handler().based_route
     }
 
     /// The matched route, excluding any trailing wildcard, combined with the base.
-    pub fn based_route_or_prefix(&self) -> String {
-        self.route_handler
+    pub fn based_route_or_prefix(&self) -> &str {
+        self.inner
+            .route_handler()
             .based_route
             .strip_suffix("/...")
-            .unwrap_or(&self.route_handler.based_route)
-            .to_string()
+            .unwrap_or(&self.inner.route_handler().based_route)
     }
 
     /// The matched route, as originally written in the manifest.
     pub fn raw_route(&self) -> &str {
-        &self.route_handler.raw_route
+        &self.inner.route_handler().raw_route
     }
 
     /// The matched route, excluding any trailing wildcard.
-    pub fn raw_route_or_prefix(&self) -> String {
-        self.route_handler
+    pub fn raw_route_or_prefix(&self) -> &str {
+        self.inner
+            .route_handler()
             .raw_route
             .strip_suffix("/...")
-            .unwrap_or(&self.route_handler.raw_route)
-            .to_string()
+            .unwrap_or(&self.inner.route_handler().raw_route)
     }
 
     /// The named wildcards captured from the path, if any
-    pub fn named_wildcards(&self) -> &HashMap<String, String> {
-        &self.named_wildcards
+    pub fn named_wildcards(&self) -> HashMap<&str, &str> {
+        self.inner.named_wildcards()
     }
 
     /// The trailing wildcard part of the path, if any
-    pub fn trailing_wildcard(&self) -> String {
-        self.trailing_wildcard.clone().unwrap_or_default()
+    pub fn trailing_wildcard(&self) -> Cow<'_, str> {
+        self.inner.trailing_wildcard()
+    }
+}
+
+/// The kind of route match that was made.
+///
+/// Can either be real based on the routefinder or synthetic based on hardcoded results.
+enum RouteMatchKind<'router, 'path> {
+    /// A synthetic match as if the given path was matched against the wildcard route.
+    Synthetic {
+        /// The route handler that matched the path.
+        route_handler: RouteHandler,
+        /// The trailing wildcard part of the path
+        trailing_wildcard: String,
+    },
+    /// A real match.
+    Real {
+        /// The route handler that matched the path.
+        route_handler: &'router RouteHandler,
+        /// The best match for the path.
+        captures: routefinder::Captures<'router, 'path>,
+        /// The path that was matched.
+        path: &'path str,
+    },
+}
+
+impl RouteMatchKind<'_, '_> {
+    /// The route handler that matched the path.
+    fn route_handler(&self) -> &RouteHandler {
+        match self {
+            RouteMatchKind::Synthetic { route_handler, .. } => route_handler,
+            RouteMatchKind::Real { route_handler, .. } => route_handler,
+        }
+    }
+
+    /// The named wildcards captured from the path, if any
+    pub fn named_wildcards(&self) -> HashMap<&str, &str> {
+        let Self::Real { captures, .. } = &self else {
+            return HashMap::new();
+        };
+        captures.iter().collect()
+    }
+
+    /// The trailing wildcard part of the path, if any
+    pub fn trailing_wildcard(&self) -> Cow<'_, str> {
+        let (captures, path) = match self {
+            // If we have a synthetic match, we already have the trailing wildcard.
+            Self::Synthetic {
+                trailing_wildcard, ..
+            } => return trailing_wildcard.into(),
+            Self::Real { captures, path, .. } => (captures, path),
+        };
+
+        captures
+            .wildcard()
+            .map(|s|
+            // Backward compatibility considerations - Spin has traditionally
+            // captured trailing slashes, but routefinder does not.
+            match (s.is_empty(), path.ends_with('/')) {
+                // route: /foo/..., path: /foo
+                (true, false) => s.into(),
+                // route: /foo/..., path: /foo/
+                (true, true) => "/".into(),
+                // route: /foo/..., path: /foo/bar
+                (false, false) => format!("/{s}").into(),
+                // route: /foo/..., path: /foo/bar/
+                (false, true) => format!("/{s}/").into(),
+            })
+            .unwrap_or_default()
     }
 }
 

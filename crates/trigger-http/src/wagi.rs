@@ -23,7 +23,7 @@ impl HttpExecutor for WagiHttpExecutor<'_> {
     async fn execute<F: RuntimeFactors>(
         &self,
         mut instance_builder: TriggerInstanceBuilder<'_, F>,
-        route_match: &RouteMatch,
+        route_match: &RouteMatch<'_, '_>,
         req: Request<Body>,
         client_addr: SocketAddr,
     ) -> Result<Response<Body>> {
@@ -71,7 +71,7 @@ impl HttpExecutor for WagiHttpExecutor<'_> {
         // `PATH_INFO`, or `X_FULL_URL`).
         // Note that this overrides any existing headers previously set by Wagi.
         for (keys, val) in compute_default_headers(&parts.uri, host, route_match, client_addr)? {
-            headers.insert(keys[1].to_string(), val);
+            headers.insert(keys[1].to_string(), val.into_owned());
         }
 
         let stdout = MemoryOutputPipe::new(usize::MAX);
