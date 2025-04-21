@@ -3,11 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use spin_factors::anyhow;
-use wasmtime_wasi::{
-    HostInputStream, HostOutputStream, StdinStream, StdoutStream, StreamError, Subscribe,
-};
+use wasmtime_wasi::{InputStream, OutputStream, Pollable, StdinStream, StdoutStream, StreamError};
 
-/// A [`HostOutputStream`] that writes to a `Write` type.
+/// A [`OutputStream`] that writes to a `Write` type.
 ///
 /// `StdinStream::stream` and `StdoutStream::new` can be called more than once in components
 /// which are composed of multiple subcomponents, since each subcomponent will potentially want
@@ -32,7 +30,7 @@ impl<T> Clone for PipedWriteStream<T> {
     }
 }
 
-impl<T: Write + Send + Sync + 'static> HostOutputStream for PipedWriteStream<T> {
+impl<T: Write + Send + Sync + 'static> OutputStream for PipedWriteStream<T> {
     fn write(&mut self, bytes: bytes::Bytes) -> Result<(), StreamError> {
         self.0
             .lock()
@@ -55,7 +53,7 @@ impl<T: Write + Send + Sync + 'static> HostOutputStream for PipedWriteStream<T> 
 }
 
 impl<T: Write + Send + Sync + 'static> StdoutStream for PipedWriteStream<T> {
-    fn stream(&self) -> Box<dyn HostOutputStream> {
+    fn stream(&self) -> Box<dyn OutputStream> {
         Box::new(self.clone())
     }
 
@@ -65,11 +63,11 @@ impl<T: Write + Send + Sync + 'static> StdoutStream for PipedWriteStream<T> {
 }
 
 #[async_trait]
-impl<T: Write + Send + Sync + 'static> Subscribe for PipedWriteStream<T> {
+impl<T: Write + Send + Sync + 'static> Pollable for PipedWriteStream<T> {
     async fn ready(&mut self) {}
 }
 
-/// A [`HostInputStream`] that reads to a `Read` type.
+/// A [`InputStream`] that reads to a `Read` type.
 ///
 /// See [`PipedWriteStream`] for more information on why this is synchronous.
 pub struct PipeReadStream<T> {
@@ -95,7 +93,7 @@ impl<T> Clone for PipeReadStream<T> {
     }
 }
 
-impl<T: Read + Send + Sync + 'static> HostInputStream for PipeReadStream<T> {
+impl<T: Read + Send + Sync + 'static> InputStream for PipeReadStream<T> {
     fn read(&mut self, size: usize) -> wasmtime_wasi::StreamResult<bytes::Bytes> {
         let size = size.min(self.buffer.len());
 
@@ -105,18 +103,21 @@ impl<T: Read + Send + Sync + 'static> HostInputStream for PipeReadStream<T> {
             .unwrap()
             .read(&mut self.buffer[..size])
             .map_err(|e| StreamError::LastOperationFailed(anyhow::anyhow!(e)))?;
+        if count == 0 {
+            return Err(wasmtime_wasi::StreamError::Closed);
+        }
 
         Ok(bytes::Bytes::copy_from_slice(&self.buffer[..count]))
     }
 }
 
 #[async_trait]
-impl<T: Read + Send + Sync + 'static> Subscribe for PipeReadStream<T> {
+impl<T: Read + Send + Sync + 'static> Pollable for PipeReadStream<T> {
     async fn ready(&mut self) {}
 }
 
 impl<T: Read + Send + Sync + 'static> StdinStream for PipeReadStream<T> {
-    fn stream(&self) -> Box<dyn HostInputStream> {
+    fn stream(&self) -> Box<dyn InputStream> {
         Box::new(self.clone())
     }
 

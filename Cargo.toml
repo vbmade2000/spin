@@ -147,20 +147,20 @@ toml = "0.8"
 tracing = { version = "0.1", features = ["log"] }
 tracing-opentelemetry = { version = "0.29", default-features = false, features = ["metrics"] }
 url = "2"
-wasi-common-preview1 = { version = "25.0.0", package = "wasi-common", features = [
+wasi-common-preview1 = { version = "32.0.0", package = "wasi-common", features = [
   "tokio",
 ] }
 wasm-pkg-client = "0.10"
 wasm-pkg-common = "0.10"
-wasmtime = "29.0.1"
-wasmtime-wasi = "29.0.1"
-wasmtime-wasi-http = "29.0.1"
+wasmtime = "32.0.0"
+wasmtime-wasi = "32.0.0"
+wasmtime-wasi-http = "32.0.0"
 
-wasm-encoder = "0.227"
-wasm-metadata = "0.227"
-wasmparser = "0.227"
-wit-component = "0.227"
-wit-parser = "0.227"
+wasm-encoder = "0.229"
+wasm-metadata = "0.229"
+wasmparser = "0.229"
+wit-component = "0.229"
+wit-parser = "0.229"
 
 spin-componentize = { path = "crates/componentize" }
 

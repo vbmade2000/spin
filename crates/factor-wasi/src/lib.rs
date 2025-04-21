@@ -16,8 +16,8 @@ use spin_factors::{
     RuntimeFactors, RuntimeFactorsInstanceState,
 };
 use wasmtime_wasi::{
-    DirPerms, FilePerms, ResourceTable, StdinStream, StdoutStream, WasiCtx, WasiCtxBuilder,
-    WasiImpl, WasiView,
+    DirPerms, FilePerms, IoImpl, IoView, ResourceTable, StdinStream, StdoutStream, WasiCtx,
+    WasiCtxBuilder, WasiImpl, WasiView,
 };
 
 pub use wasmtime_wasi::SocketAddrUse;
@@ -37,10 +37,10 @@ impl WasiFactor {
         runtime_instance_state: &mut impl RuntimeFactorsInstanceState,
     ) -> Option<WasiImpl<impl WasiView + '_>> {
         let (state, table) = runtime_instance_state.get_with_table::<WasiFactor>()?;
-        Some(WasiImpl(WasiImplInner {
+        Some(WasiImpl(IoImpl(WasiImplInner {
             ctx: &mut state.ctx,
             table,
-        }))
+        })))
     }
 }
 
@@ -50,52 +50,63 @@ impl Factor for WasiFactor {
     type InstanceBuilder = InstanceBuilder;
 
     fn init<T: Send + 'static>(&mut self, mut ctx: InitContext<T, Self>) -> anyhow::Result<()> {
-        fn type_annotate<T, F>(f: F) -> F
+        fn type_annotate_wasi<T, F>(f: F) -> F
         where
             F: Fn(&mut T) -> WasiImpl<WasiImplInner>,
         {
             f
         }
+        fn type_annotate_io<T, F>(f: F) -> F
+        where
+            F: Fn(&mut T) -> IoImpl<WasiImplInner>,
+        {
+            f
+        }
         let get_data_with_table = ctx.get_data_with_table_fn();
-        let closure = type_annotate(move |data| {
+        let io_closure = type_annotate_io(move |data| {
             let (state, table) = get_data_with_table(data);
-            WasiImpl(WasiImplInner {
+            IoImpl(WasiImplInner {
                 ctx: &mut state.ctx,
                 table,
             })
         });
+        let wasi_closure = type_annotate_wasi(move |data| WasiImpl(io_closure(data)));
         let linker = ctx.linker();
         use wasmtime_wasi::bindings;
-        bindings::clocks::wall_clock::add_to_linker_get_host(linker, closure)?;
-        bindings::clocks::monotonic_clock::add_to_linker_get_host(linker, closure)?;
-        bindings::filesystem::types::add_to_linker_get_host(linker, closure)?;
-        bindings::filesystem::preopens::add_to_linker_get_host(linker, closure)?;
-        bindings::io::error::add_to_linker_get_host(linker, closure)?;
-        bindings::io::poll::add_to_linker_get_host(linker, closure)?;
-        bindings::io::streams::add_to_linker_get_host(linker, closure)?;
-        bindings::random::random::add_to_linker_get_host(linker, closure)?;
-        bindings::random::insecure::add_to_linker_get_host(linker, closure)?;
-        bindings::random::insecure_seed::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::exit::add_to_linker_get_host(linker, &Default::default(), closure)?;
-        bindings::cli::environment::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::stdin::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::stdout::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::stderr::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::terminal_input::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::terminal_output::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::terminal_stdin::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::terminal_stdout::add_to_linker_get_host(linker, closure)?;
-        bindings::cli::terminal_stderr::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::tcp::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::tcp_create_socket::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::udp::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::udp_create_socket::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::instance_network::add_to_linker_get_host(linker, closure)?;
-        bindings::sockets::network::add_to_linker_get_host(linker, &Default::default(), closure)?;
-        bindings::sockets::ip_name_lookup::add_to_linker_get_host(linker, closure)?;
+        bindings::clocks::wall_clock::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::clocks::monotonic_clock::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::filesystem::types::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::filesystem::preopens::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::io::error::add_to_linker_get_host(linker, io_closure)?;
+        bindings::io::poll::add_to_linker_get_host(linker, io_closure)?;
+        bindings::io::streams::add_to_linker_get_host(linker, io_closure)?;
+        bindings::random::random::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::random::insecure::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::random::insecure_seed::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::exit::add_to_linker_get_host(linker, &Default::default(), wasi_closure)?;
+        bindings::cli::environment::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::stdin::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::stdout::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::stderr::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::terminal_input::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::terminal_output::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::terminal_stdin::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::terminal_stdout::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::cli::terminal_stderr::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::tcp::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::tcp_create_socket::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::udp::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::udp_create_socket::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::instance_network::add_to_linker_get_host(linker, wasi_closure)?;
+        bindings::sockets::network::add_to_linker_get_host(
+            linker,
+            &Default::default(),
+            wasi_closure,
+        )?;
+        bindings::sockets::ip_name_lookup::add_to_linker_get_host(linker, wasi_closure)?;
 
-        wasi_2023_10_18::add_to_linker(linker, closure)?;
-        wasi_2023_11_10::add_to_linker(linker, closure)?;
+        wasi_2023_10_18::add_to_linker(linker, wasi_closure)?;
+        wasi_2023_11_10::add_to_linker(linker, wasi_closure)?;
 
         Ok(())
     }
@@ -288,7 +299,9 @@ impl WasiView for WasiImplInner<'_> {
     fn ctx(&mut self) -> &mut WasiCtx {
         self.ctx
     }
+}
 
+impl IoView for WasiImplInner<'_> {
     fn table(&mut self) -> &mut ResourceTable {
         self.table
     }
