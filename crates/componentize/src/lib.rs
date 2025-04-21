@@ -267,7 +267,9 @@ mod tests {
             component::{Component, Linker},
             Config, Engine, Store,
         },
-        wasmtime_wasi::{bindings::Command, pipe::MemoryInputPipe, ResourceTable, WasiView},
+        wasmtime_wasi::{
+            bindings::Command, pipe::MemoryInputPipe, IoView, ResourceTable, WasiView,
+        },
         wasmtime_wasi::{WasiCtx, WasiCtxBuilder},
     };
 
@@ -357,11 +359,12 @@ mod tests {
             ctx: WasiCtx,
             table: ResourceTable,
         }
-        impl WasiView for Wasi {
+        impl IoView for Wasi {
             fn table(&mut self) -> &mut ResourceTable {
                 &mut self.table
             }
-
+        }
+        impl WasiView for Wasi {
             fn ctx(&mut self) -> &mut WasiCtx {
                 &mut self.ctx
             }

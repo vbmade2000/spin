@@ -553,7 +553,7 @@ where
     T: WasiView,
 {
     async fn poll(&mut self, list: Vec<Resource<Pollable>>) -> wasmtime::Result<Vec<u32>> {
-        latest::io::poll::Host::poll(self, list).await
+        latest::io::poll::Host::poll(&mut self.0, list).await
     }
 }
 
@@ -562,15 +562,15 @@ where
     T: WasiView,
 {
     async fn block(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<()> {
-        latest::io::poll::HostPollable::block(self, rep).await
+        latest::io::poll::HostPollable::block(&mut self.0, rep).await
     }
 
     async fn ready(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<bool> {
-        latest::io::poll::HostPollable::ready(self, rep).await
+        latest::io::poll::HostPollable::ready(&mut self.0, rep).await
     }
 
     fn drop(&mut self, rep: Resource<Pollable>) -> wasmtime::Result<()> {
-        latest::io::poll::HostPollable::drop(self, rep)
+        latest::io::poll::HostPollable::drop(&mut self.0, rep)
     }
 }
 
@@ -581,11 +581,11 @@ where
     T: WasiView,
 {
     fn to_debug_string(&mut self, self_: Resource<IoError>) -> wasmtime::Result<String> {
-        latest::io::error::HostError::to_debug_string(self, self_)
+        latest::io::error::HostError::to_debug_string(&mut self.0, self_)
     }
 
     fn drop(&mut self, rep: Resource<IoError>) -> wasmtime::Result<()> {
-        latest::io::error::HostError::drop(self, rep)
+        latest::io::error::HostError::drop(&mut self.0, rep)
     }
 }
 
@@ -618,7 +618,7 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
-        let result = latest::io::streams::HostInputStream::read(self, self_, len);
+        let result = latest::io::streams::HostInputStream::read(&mut self.0, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -627,7 +627,8 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
-        let result = latest::io::streams::HostInputStream::blocking_read(self, self_, len).await;
+        let result =
+            latest::io::streams::HostInputStream::blocking_read(&mut self.0, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -636,7 +637,7 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostInputStream::skip(self, self_, len);
+        let result = latest::io::streams::HostInputStream::skip(&mut self.0, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -645,16 +646,17 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostInputStream::blocking_skip(self, self_, len).await;
+        let result =
+            latest::io::streams::HostInputStream::blocking_skip(&mut self.0, self_, len).await;
         convert_stream_result(self, result)
     }
 
     fn subscribe(&mut self, self_: Resource<InputStream>) -> wasmtime::Result<Resource<Pollable>> {
-        latest::io::streams::HostInputStream::subscribe(self, self_)
+        latest::io::streams::HostInputStream::subscribe(&mut self.0, self_)
     }
 
     async fn drop(&mut self, rep: Resource<InputStream>) -> wasmtime::Result<()> {
-        latest::io::streams::HostInputStream::drop(self, rep).await
+        latest::io::streams::HostInputStream::drop(&mut self.0, rep).await
     }
 }
 
@@ -666,7 +668,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostOutputStream::check_write(self, self_);
+        let result = latest::io::streams::HostOutputStream::check_write(&mut self.0, self_);
         convert_stream_result(self, result)
     }
 
@@ -675,7 +677,7 @@ where
         self_: Resource<OutputStream>,
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::write(self, self_, contents);
+        let result = latest::io::streams::HostOutputStream::write(&mut self.0, self_, contents);
         convert_stream_result(self, result)
     }
 
@@ -684,9 +686,12 @@ where
         self_: Resource<OutputStream>,
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result =
-            latest::io::streams::HostOutputStream::blocking_write_and_flush(self, self_, contents)
-                .await;
+        let result = latest::io::streams::HostOutputStream::blocking_write_and_flush(
+            &mut self.0,
+            self_,
+            contents,
+        )
+        .await;
         convert_stream_result(self, result)
     }
 
@@ -694,7 +699,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::flush(self, self_);
+        let result = latest::io::streams::HostOutputStream::flush(&mut self.0, self_);
         convert_stream_result(self, result)
     }
 
@@ -702,12 +707,13 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::blocking_flush(self, self_).await;
+        let result =
+            latest::io::streams::HostOutputStream::blocking_flush(&mut self.0, self_).await;
         convert_stream_result(self, result)
     }
 
     fn subscribe(&mut self, self_: Resource<OutputStream>) -> wasmtime::Result<Resource<Pollable>> {
-        latest::io::streams::HostOutputStream::subscribe(self, self_)
+        latest::io::streams::HostOutputStream::subscribe(&mut self.0, self_)
     }
 
     fn write_zeroes(
@@ -715,7 +721,7 @@ where
         self_: Resource<OutputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::write_zeroes(self, self_, len);
+        let result = latest::io::streams::HostOutputStream::write_zeroes(&mut self.0, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -725,7 +731,9 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
         let result = latest::io::streams::HostOutputStream::blocking_write_zeroes_and_flush(
-            self, self_, len,
+            &mut self.0,
+            self_,
+            len,
         )
         .await;
         convert_stream_result(self, result)
@@ -737,7 +745,7 @@ where
         src: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostOutputStream::splice(self, self_, src, len);
+        let result = latest::io::streams::HostOutputStream::splice(&mut self.0, self_, src, len);
         convert_stream_result(self, result)
     }
 
@@ -748,12 +756,13 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
         let result =
-            latest::io::streams::HostOutputStream::blocking_splice(self, self_, src, len).await;
+            latest::io::streams::HostOutputStream::blocking_splice(&mut self.0, self_, src, len)
+                .await;
         convert_stream_result(self, result)
     }
 
     async fn drop(&mut self, rep: Resource<OutputStream>) -> wasmtime::Result<()> {
-        latest::io::streams::HostOutputStream::drop(self, rep).await
+        latest::io::streams::HostOutputStream::drop(&mut self.0, rep).await
     }
 }
 
