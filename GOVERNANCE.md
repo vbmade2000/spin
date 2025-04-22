@@ -22,6 +22,7 @@ The Spin project consists of several codebases with different release cycles. Th
     - [Spin Cron Trigger](https://github.com/spinframework/spin-trigger-cron)
 - Other
     - [Spin Fileserver](https://github.com/spinframework/spin-fileserver)
+    - [Spin Redirect](https://github.com/spinframework/spin-redirect)
 
 Each repository is subject to the same overall governance model, but has different teams of people (“maintainers”) with permissions and access to the repository. This is meant to increase diversity of maintainers in the Spin project and also increases the velocity of code changes. Major changes and features to the project including additions to the repository list above are to be proposed through the [Spin Improvement Proposal](docs/content/sips/index.md) process.
 
