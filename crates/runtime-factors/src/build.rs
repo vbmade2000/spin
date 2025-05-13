@@ -6,8 +6,9 @@ use anyhow::Context as _;
 use spin_factors_executor::FactorsExecutor;
 use spin_runtime_config::ResolvedRuntimeConfig;
 use spin_trigger::cli::{
-    FactorsConfig, InitialKvSetterHook, KeyValueDefaultStoreSummaryHook, RuntimeFactorsBuilder,
-    SqlStatementExecutorHook, SqliteDefaultStoreSummaryHook, StdioLoggingExecutorHooks,
+    FactorsConfig, InitialKvSetterHook, KeyValueDefaultStoreSummaryHook, MaxInstanceMemoryHook,
+    RuntimeFactorsBuilder, SqlStatementExecutorHook, SqliteDefaultStoreSummaryHook,
+    StdioLoggingExecutorHooks,
 };
 
 /// A [`RuntimeFactorsBuilder`] for [`TriggerFactors`].
@@ -56,6 +57,16 @@ impl RuntimeFactorsBuilder for FactorsBuilder {
         executor.add_hooks(InitialKvSetterHook::new(args.key_values.clone()));
         executor.add_hooks(SqliteDefaultStoreSummaryHook);
         executor.add_hooks(KeyValueDefaultStoreSummaryHook);
+
+        let max_instance_memory = args
+            .max_instance_memory
+            .or(runtime_config.max_instance_memory());
+
+        // Only add the hook if a max instance memory size is specified via flag or runtime config.
+        if let Some(max_instance_memory) = max_instance_memory {
+            executor.add_hooks(MaxInstanceMemoryHook::new(max_instance_memory));
+        }
+
         Ok(())
     }
 }

@@ -100,6 +100,10 @@ pub struct TriggerAppArgs {
     /// To run from a file, prefix the filename with @ e.g. spin up --sqlite @migration.sql
     #[clap(long = "sqlite")]
     pub sqlite_statements: Vec<String>,
+
+    /// Sets the maxmimum memory allocation limit for an instance in bytes.
+    #[clap(long, env = "SPIN_MAX_INSTANCE_MEMORY")]
+    pub max_instance_memory: Option<usize>,
 }
 
 impl From<ResolvedRuntimeConfig<TriggerFactorsRuntimeConfig>> for TriggerFactorsRuntimeConfig {
