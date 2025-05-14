@@ -1,5 +1,6 @@
 mod initial_kv_setter;
 mod launch_metadata;
+mod max_instance_memory;
 mod sqlite_statements;
 mod stdio;
 mod summary;
@@ -19,6 +20,7 @@ use spin_factors_executor::{ComponentLoader, FactorsExecutor};
 use crate::{loader::ComponentLoader as ComponentLoaderImpl, Trigger, TriggerApp};
 pub use initial_kv_setter::InitialKvSetterHook;
 pub use launch_metadata::LaunchMetadata;
+pub use max_instance_memory::MaxInstanceMemoryHook;
 pub use sqlite_statements::SqlStatementExecutorHook;
 use stdio::FollowComponents;
 pub use stdio::StdioLoggingExecutorHooks;

@@ -45,6 +45,8 @@ pub struct ResolvedRuntimeConfig<T> {
     ///
     /// `None` is used for an "unset" log directory.
     pub log_dir: Option<PathBuf>,
+    /// The maximum memory allocation limit.
+    pub max_instance_memory: Option<usize>,
     /// The input TOML, for informational summaries.
     pub toml: toml::Table,
 }
@@ -137,12 +139,15 @@ where
 
         let toml = toml_resolver.toml();
         let log_dir = toml_resolver.log_dir()?;
+        let max_instance_memory = toml_resolver.max_instance_memory()?;
+
         let source = TomlRuntimeConfigSource::new(
             toml_resolver,
             &key_value_resolver,
             tls_resolver.as_ref(),
             &sqlite_resolver,
         );
+
         // Note: all valid fields in the runtime config must have been referenced at
         // this point or the finalizer will fail due to `validate_all_keys_used`
         // not passing.
@@ -154,6 +159,7 @@ where
             sqlite_resolver,
             state_dir,
             log_dir,
+            max_instance_memory,
             toml,
         })
     }
@@ -166,6 +172,11 @@ where
     /// The fully resolved state directory.
     pub fn log_dir(&self) -> Option<PathBuf> {
         self.log_dir.clone()
+    }
+
+    /// The maximum memory allocation limit.
+    pub fn max_instance_memory(&self) -> Option<usize> {
+        self.max_instance_memory
     }
 }
 
@@ -259,6 +270,16 @@ impl<'a> TomlResolver<'a> {
             UserProvidedPath::Default => Ok(self.state_dir()?.map(|p| p.join("logs"))),
             UserProvidedPath::Unset => Ok(None),
         }
+    }
+
+    /// Get the configured maximum memory allocation limit.
+    pub fn max_instance_memory(&self) -> anyhow::Result<Option<usize>> {
+        self.table
+            .get("max_instance_memory")
+            .and_then(|v| v.as_integer())
+            .map(|toml_value| toml_value.try_into())
+            .transpose()
+            .map_err(Into::into)
     }
 
     /// Validate that all keys in the TOML file have been used.
