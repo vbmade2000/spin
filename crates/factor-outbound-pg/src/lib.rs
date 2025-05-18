@@ -17,10 +17,7 @@ impl<C: Send + Sync + Client + 'static> Factor for OutboundPgFactor<C> {
     type AppState = ();
     type InstanceBuilder = InstanceState<C>;
 
-    fn init<I>(&mut self, ctx: &mut I) -> anyhow::Result<()>
-    where
-        I: spin_factors::InitContext<Self>,
-    {
+    fn init(&mut self, ctx: &mut impl spin_factors::InitContext<Self>) -> anyhow::Result<()> {
         ctx.link_bindings(spin_world::v1::postgres::add_to_linker)?;
         ctx.link_bindings(spin_world::v2::postgres::add_to_linker)?;
         ctx.link_bindings(spin_world::spin::postgres::postgres::add_to_linker)?;

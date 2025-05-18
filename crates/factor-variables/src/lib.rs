@@ -28,10 +28,7 @@ impl Factor for VariablesFactor {
     type AppState = AppState;
     type InstanceBuilder = InstanceState;
 
-    fn init<C>(&mut self, ctx: &mut C) -> anyhow::Result<()>
-    where
-        C: InitContext<Self>,
-    {
+    fn init(&mut self, ctx: &mut impl InitContext<Self>) -> anyhow::Result<()> {
         ctx.link_bindings(spin_world::v1::config::add_to_linker)?;
         ctx.link_bindings(spin_world::v2::variables::add_to_linker)?;
         ctx.link_bindings(spin_world::wasi::config::store::add_to_linker)?;

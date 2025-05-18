@@ -28,13 +28,7 @@ pub trait Factor: Any + Sized {
     /// This will be called at most once, before any call to
     /// [`Factor::prepare`]. `InitContext` provides access to a wasmtime
     /// `Linker`, so this is where any bindgen `add_to_linker` calls go.
-    ///
-    /// The type parameter `T` here is the same as the [`wasmtime::Store`] type
-    /// parameter `T`, which will contain the [`RuntimeFactors::InstanceState`].
-    fn init<C>(&mut self, ctx: &mut C) -> anyhow::Result<()>
-    where
-        C: InitContext<Self>,
-    {
+    fn init(&mut self, ctx: &mut impl InitContext<Self>) -> anyhow::Result<()> {
         let _ = ctx;
         Ok(())
     }
@@ -79,6 +73,7 @@ pub type FactorInstanceState<F> =
 /// An InitContext is passed to [`Factor::init`], giving access to the global
 /// common [`wasmtime::component::Linker`].
 pub trait InitContext<F: Factor> {
+    /// The `T` in `Store<T>`.
     type StoreData: Send + 'static;
 
     /// Returns a mutable reference to the [`wasmtime::component::Linker`].
@@ -103,8 +98,7 @@ pub trait InitContext<F: Factor> {
             fn(&mut Self::StoreData) -> &mut FactorInstanceState<F>,
         ) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let get_data = Self::get_data;
-        add_to_linker(self.linker(), get_data)
+        add_to_linker(self.linker(), Self::get_data)
     }
 }
 

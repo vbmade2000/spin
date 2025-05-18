@@ -44,66 +44,98 @@ impl WasiFactor {
     }
 }
 
+/// Helper trait to extend `InitContext` with some more `link_*_bindings`
+/// methods related to `wasmtime-wasi` and `wasmtime-wasi-io`-specific
+/// signatures.
+#[allow(clippy::type_complexity, reason = "sorry, blame alex")]
+trait InitContextExt: InitContext<WasiFactor> {
+    fn get_io(data: &mut Self::StoreData) -> IoImpl<WasiImplInner<'_>> {
+        let (state, table) = Self::get_data_with_table(data);
+        IoImpl(WasiImplInner {
+            ctx: &mut state.ctx,
+            table,
+        })
+    }
+
+    fn link_io_bindings(
+        &mut self,
+        add_to_linker: fn(
+            &mut wasmtime::component::Linker<Self::StoreData>,
+            fn(&mut Self::StoreData) -> IoImpl<WasiImplInner<'_>>,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        add_to_linker(self.linker(), Self::get_io)
+    }
+
+    fn get_wasi(data: &mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>> {
+        WasiImpl(Self::get_io(data))
+    }
+
+    fn link_wasi_bindings(
+        &mut self,
+        add_to_linker: fn(
+            &mut wasmtime::component::Linker<Self::StoreData>,
+            fn(&mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>>,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        add_to_linker(self.linker(), Self::get_wasi)
+    }
+
+    fn link_wasi_default_bindings<O>(
+        &mut self,
+        add_to_linker: fn(
+            &mut wasmtime::component::Linker<Self::StoreData>,
+            &O,
+            fn(&mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>>,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()>
+    where
+        O: Default,
+    {
+        add_to_linker(self.linker(), &O::default(), Self::get_wasi)
+    }
+}
+
+impl<T> InitContextExt for T where T: InitContext<WasiFactor> {}
+
 impl Factor for WasiFactor {
     type RuntimeConfig = ();
     type AppState = ();
     type InstanceBuilder = InstanceBuilder;
 
-    fn init<C>(&mut self, ctx: &mut C) -> anyhow::Result<()>
-    where
-        C: InitContext<Self>,
-    {
-        fn get_io<C: InitContext<WasiFactor>>(
-            data: &mut C::StoreData,
-        ) -> IoImpl<WasiImplInner<'_>> {
-            let (state, table) = C::get_data_with_table(data);
-            IoImpl(WasiImplInner {
-                ctx: &mut state.ctx,
-                table,
-            })
-        }
-
-        fn get_wasi<C: InitContext<WasiFactor>>(
-            data: &mut C::StoreData,
-        ) -> WasiImpl<WasiImplInner<'_>> {
-            WasiImpl(get_io::<C>(data))
-        }
-
-        let get_io = get_io::<C> as fn(&mut C::StoreData) -> IoImpl<WasiImplInner<'_>>;
-        let get_wasi = get_wasi::<C> as fn(&mut C::StoreData) -> WasiImpl<WasiImplInner<'_>>;
-        let linker = ctx.linker();
+    fn init(&mut self, ctx: &mut impl InitContext<Self>) -> anyhow::Result<()> {
         use wasmtime_wasi::bindings;
-        bindings::clocks::wall_clock::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::clocks::monotonic_clock::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::filesystem::types::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::filesystem::preopens::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::io::error::add_to_linker_get_host(linker, get_io)?;
-        bindings::io::poll::add_to_linker_get_host(linker, get_io)?;
-        bindings::io::streams::add_to_linker_get_host(linker, get_io)?;
-        bindings::random::random::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::random::insecure::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::random::insecure_seed::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::exit::add_to_linker_get_host(linker, &Default::default(), get_wasi)?;
-        bindings::cli::environment::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::stdin::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::stdout::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::stderr::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::terminal_input::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::terminal_output::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::terminal_stdin::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::terminal_stdout::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::cli::terminal_stderr::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::tcp::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::tcp_create_socket::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::udp::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::udp_create_socket::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::instance_network::add_to_linker_get_host(linker, get_wasi)?;
-        bindings::sockets::network::add_to_linker_get_host(linker, &Default::default(), get_wasi)?;
-        bindings::sockets::ip_name_lookup::add_to_linker_get_host(linker, get_wasi)?;
 
-        wasi_2023_10_18::add_to_linker(linker, get_wasi)?;
-        wasi_2023_11_10::add_to_linker(linker, get_wasi)?;
+        ctx.link_wasi_bindings(bindings::clocks::wall_clock::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::clocks::monotonic_clock::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::filesystem::types::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::filesystem::preopens::add_to_linker_get_host)?;
+        ctx.link_io_bindings(bindings::io::error::add_to_linker_get_host)?;
+        ctx.link_io_bindings(bindings::io::poll::add_to_linker_get_host)?;
+        ctx.link_io_bindings(bindings::io::streams::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::random::random::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::random::insecure::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::random::insecure_seed::add_to_linker_get_host)?;
+        ctx.link_wasi_default_bindings(bindings::cli::exit::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::environment::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::stdin::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::stdout::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::stderr::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::terminal_input::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::terminal_output::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::terminal_stdin::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::terminal_stdout::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::cli::terminal_stderr::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::tcp::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::tcp_create_socket::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::udp::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::udp_create_socket::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::instance_network::add_to_linker_get_host)?;
+        ctx.link_wasi_default_bindings(bindings::sockets::network::add_to_linker_get_host)?;
+        ctx.link_wasi_bindings(bindings::sockets::ip_name_lookup::add_to_linker_get_host)?;
 
+        ctx.link_wasi_bindings(wasi_2023_10_18::add_to_linker)?;
+        ctx.link_wasi_bindings(wasi_2023_11_10::add_to_linker)?;
         Ok(())
     }
 
