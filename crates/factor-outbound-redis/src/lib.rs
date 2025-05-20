@@ -23,10 +23,7 @@ impl Factor for OutboundRedisFactor {
     type AppState = ();
     type InstanceBuilder = InstanceState;
 
-    fn init<T: Send + 'static>(
-        &mut self,
-        mut ctx: spin_factors::InitContext<T, Self>,
-    ) -> anyhow::Result<()> {
+    fn init(&mut self, ctx: &mut impl spin_factors::InitContext<Self>) -> anyhow::Result<()> {
         ctx.link_bindings(spin_world::v1::redis::add_to_linker)?;
         ctx.link_bindings(spin_world::v2::redis::add_to_linker)?;
         Ok(())

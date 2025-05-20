@@ -32,10 +32,7 @@ impl Factor for SqliteFactor {
     type AppState = AppState;
     type InstanceBuilder = InstanceState;
 
-    fn init<T: Send + 'static>(
-        &mut self,
-        mut ctx: spin_factors::InitContext<T, Self>,
-    ) -> anyhow::Result<()> {
+    fn init(&mut self, ctx: &mut impl spin_factors::InitContext<Self>) -> anyhow::Result<()> {
         ctx.link_bindings(v1::add_to_linker)?;
         ctx.link_bindings(v2::add_to_linker)?;
         ctx.link_bindings(v3::add_to_linker)?;
