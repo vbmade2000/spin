@@ -254,7 +254,7 @@ mod tests {
     use std::{path::PathBuf, process};
 
     use anyhow::Context;
-    use wasmtime_wasi::pipe::MemoryOutputPipe;
+    use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 
     use {
         super::abi_conformance::{
@@ -267,10 +267,10 @@ mod tests {
             component::{Component, Linker},
             Config, Engine, Store,
         },
-        wasmtime_wasi::{
-            bindings::Command, pipe::MemoryInputPipe, IoView, ResourceTable, WasiView,
+        wasmtime_wasi::p2::{
+            bindings::Command, pipe::MemoryInputPipe, IoView, WasiCtx, WasiCtxBuilder, WasiView,
         },
-        wasmtime_wasi::{WasiCtx, WasiCtxBuilder},
+        wasmtime_wasi::ResourceTable,
     };
 
     async fn run_spin(module: &[u8]) -> Result<()> {
@@ -371,7 +371,7 @@ mod tests {
         }
 
         let mut linker = Linker::<Wasi>::new(&engine);
-        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         let mut ctx = WasiCtxBuilder::new();
         let stdout = MemoryOutputPipe::new(1024);
         ctx.stdin(MemoryInputPipe::new("So rested he by the Tumtum tree"))

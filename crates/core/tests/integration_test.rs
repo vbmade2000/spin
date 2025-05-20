@@ -158,8 +158,8 @@ async fn run_test(
     let instance = instance_pre.instantiate_async(&mut store).await?;
     let func = {
         let func = instance
-            .get_export(&mut store, None, "wasi:cli/run@0.2.0")
-            .and_then(|i| instance.get_export(&mut store, Some(&i), "run"))
+            .get_export_index(&mut store, None, "wasi:cli/run@0.2.0")
+            .and_then(|i| instance.get_export_index(&mut store, Some(&i), "run"))
             .context("missing the expected 'wasi:cli/run@0.2.0/run' function")?;
         instance.get_typed_func::<(), (Result<(), ()>,)>(&mut store, &func)?
     };

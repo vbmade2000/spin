@@ -1,7 +1,7 @@
 use spin_factor_wasi::{DummyFilesMounter, WasiFactor};
 use spin_factors::{anyhow, RuntimeFactors};
 use spin_factors_test::{toml, TestEnvironment};
-use wasmtime_wasi::bindings::cli::environment::Host;
+use wasmtime_wasi::p2::bindings::cli::environment::Host;
 
 #[derive(RuntimeFactors)]
 struct TestFactors {

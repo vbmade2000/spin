@@ -55,10 +55,8 @@ impl Config {
     ///
     /// [docs]: https://docs.wasmtime.dev/cli-cache.html
     pub fn enable_cache(&mut self, config_path: &Option<PathBuf>) -> Result<()> {
-        match config_path {
-            Some(p) => self.inner.cache_config_load(p)?,
-            None => self.inner.cache_config_load_default()?,
-        };
+        self.inner
+            .cache(Some(wasmtime::Cache::from_file(config_path.as_deref())?));
 
         Ok(())
     }

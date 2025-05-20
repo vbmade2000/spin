@@ -36,9 +36,8 @@ use wasmtime::{
     component::{Component, InstancePre, Linker},
     Engine, Store,
 };
-use wasmtime_wasi::{
-    pipe::MemoryOutputPipe, IoView, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView,
-};
+use wasmtime_wasi::p2::{pipe::MemoryOutputPipe, IoView, WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::ResourceTable;
 
 pub use test_key_value::KeyValueReport;
 pub use test_llm::LlmReport;
@@ -164,7 +163,7 @@ pub async fn test(
     test_config: TestConfig,
 ) -> Result<Report> {
     let mut linker = Linker::<Context>::new(engine);
-    wasmtime_wasi::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     http::add_to_linker(&mut linker, |context| &mut context.http)?;
     redis::add_to_linker(&mut linker, |context| &mut context.redis)?;
     postgres::add_to_linker(&mut linker, |context| &mut context.postgres)?;
@@ -291,8 +290,10 @@ async fn run_command(
         match store.data().test_config.invocation_style {
             InvocationStyle::InboundHttp => {
                 let func = instance
-                    .get_export(&mut *store, None, "fermyon:spin/inbound-http")
-                    .and_then(|i| instance.get_export(&mut *store, Some(&i), "handle-request"))
+                    .get_export_index(&mut *store, None, "fermyon:spin/inbound-http")
+                    .and_then(|i| {
+                        instance.get_export_index(&mut *store, Some(&i), "handle-request")
+                    })
                     .ok_or_else(|| {
                         anyhow!("no fermyon:spin/inbound-http/handle-request function was found")
                     })?;

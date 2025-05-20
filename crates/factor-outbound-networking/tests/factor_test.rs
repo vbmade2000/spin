@@ -3,7 +3,8 @@ use spin_factor_variables::VariablesFactor;
 use spin_factor_wasi::{DummyFilesMounter, WasiFactor};
 use spin_factors::{anyhow, RuntimeFactors};
 use spin_factors_test::{toml, TestEnvironment};
-use wasmtime_wasi::{bindings::sockets::instance_network::Host, IoView, SocketAddrUse};
+use wasmtime_wasi::p2::{bindings::sockets::instance_network::Host, IoView};
+use wasmtime_wasi::SocketAddrUse;
 
 #[derive(RuntimeFactors)]
 struct TestFactors {
