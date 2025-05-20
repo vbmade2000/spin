@@ -168,19 +168,19 @@ toml_edit = "0.22"
 tracing = { version = "0.1", features = ["log"] }
 url = "2"
 walkdir = "2"
-wasi-common-preview1 = { version = "32.0.0", package = "wasi-common", features = [
+wasi-common-preview1 = { version = "33.0.0", package = "wasi-common", features = [
   "tokio",
 ] }
-wasm-encoder = "0.229"
-wasm-metadata = "0.229"
+wasm-encoder = "0.230"
+wasm-metadata = "0.230"
 wasm-pkg-client = "0.10"
 wasm-pkg-common = "0.10"
-wasmparser = "0.229"
-wasmtime = "32.0.0"
-wasmtime-wasi = "32.0.0"
-wasmtime-wasi-http = "32.0.0"
-wit-component = "0.229"
-wit-parser = "0.229"
+wasmparser = "0.230"
+wasmtime = "33.0.0"
+wasmtime-wasi = "33.0.0"
+wasmtime-wasi-http = "33.0.0"
+wit-component = "0.230"
+wit-parser = "0.230"
 
 spin-componentize = { path = "crates/componentize" }
 

@@ -19,7 +19,7 @@ use std::{
 };
 use wasmtime::{component::InstancePre, Engine};
 use wasmtime_wasi::{
-    pipe::{MemoryInputPipe, MemoryOutputPipe},
+    p2::pipe::{MemoryInputPipe, MemoryOutputPipe},
     HostWallClock,
 };
 

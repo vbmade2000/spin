@@ -15,10 +15,10 @@ use spin_factors::{
     anyhow, AppComponent, Factor, FactorInstanceBuilder, InitContext, PrepareContext,
     RuntimeFactors, RuntimeFactorsInstanceState,
 };
-use wasmtime_wasi::{
-    DirPerms, FilePerms, IoImpl, IoView, ResourceTable, StdinStream, StdoutStream, WasiCtx,
-    WasiCtxBuilder, WasiImpl, WasiView,
+use wasmtime_wasi::p2::{
+    IoImpl, IoView, StdinStream, StdoutStream, WasiCtx, WasiCtxBuilder, WasiImpl, WasiView,
 };
+use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
 
 pub use wasmtime_wasi::SocketAddrUse;
 
@@ -104,7 +104,7 @@ impl Factor for WasiFactor {
     type InstanceBuilder = InstanceBuilder;
 
     fn init(&mut self, ctx: &mut impl InitContext<Self>) -> anyhow::Result<()> {
-        use wasmtime_wasi::bindings;
+        use wasmtime_wasi::p2::bindings;
 
         ctx.link_wasi_bindings(bindings::clocks::wall_clock::add_to_linker_get_host)?;
         ctx.link_wasi_bindings(bindings::clocks::monotonic_clock::add_to_linker_get_host)?;

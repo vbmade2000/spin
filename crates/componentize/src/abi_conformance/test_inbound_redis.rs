@@ -15,8 +15,8 @@ pub(crate) async fn test(
         let instance = pre.instantiate_async(&mut store).await?;
 
         let func = instance
-            .get_export(&mut store, None, "fermyon:spin/inbound-redis")
-            .and_then(|i| instance.get_export(&mut store, Some(&i), "handle-message"))
+            .get_export_index(&mut store, None, "fermyon:spin/inbound-redis")
+            .and_then(|i| instance.get_export_index(&mut store, Some(&i), "handle-message"))
             .ok_or_else(|| {
                 anyhow!("no fermyon:spin/inbound-redis/handle-message function was found")
             })?;

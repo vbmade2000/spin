@@ -148,11 +148,13 @@ impl<T: RuntimeFactors, U: Send + 'static> FactorsExecutorApp<T, U> {
     }
 
     pub fn get_component(&self, component_id: &str) -> anyhow::Result<&Component> {
-        let instance_pre = self
-            .component_instance_pres
+        Ok(self.get_instance_pre(component_id)?.component())
+    }
+
+    pub fn get_instance_pre(&self, component_id: &str) -> anyhow::Result<&InstancePre<T, U>> {
+        self.component_instance_pres
             .get(component_id)
-            .with_context(|| format!("no such component {component_id:?}"))?;
-        Ok(instance_pre.component())
+            .with_context(|| format!("no such component {component_id:?}"))
     }
 
     /// Returns an instance builder for the given component ID.
