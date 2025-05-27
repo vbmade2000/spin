@@ -92,8 +92,18 @@ impl Factor for OutboundNetworkingFactor {
             .expression_resolver()
             .clone();
         let allowed_hosts_future = async move {
-            let prepared = resolver.prepare().await?;
-            AllowedHostsConfig::parse(&hosts, &prepared)
+            let prepared = resolver.prepare().await.inspect_err(|err| {
+                tracing::error!(
+                    %err, "error.type" = "variable_resolution_failed",
+                    "Error resolving variables when checking request against allowed outbound hosts",
+                );
+            })?;
+            AllowedHostsConfig::parse(&hosts, &prepared).inspect_err(|err| {
+                tracing::error!(
+                    %err, "error.type" = "invalid_allowed_hosts",
+                    "Error parsing allowed outbound hosts",
+                );
+            })
         }
         .map(|res| res.map(Arc::new).map_err(Arc::new))
         .boxed()
@@ -227,10 +237,10 @@ impl OutboundAllowedHosts {
     }
 
     async fn resolve(&self) -> anyhow::Result<Arc<AllowedHostsConfig>> {
-        self.allowed_hosts_future.clone().await.map_err(|err| {
-            tracing::error!(%err, "Error resolving variables when checking request against allowed outbound hosts");
-            anyhow::Error::msg(err)
-        })
+        self.allowed_hosts_future
+            .clone()
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     fn report_disallowed_host(&self, scheme: &str, authority: &str) {
