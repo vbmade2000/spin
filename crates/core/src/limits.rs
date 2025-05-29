@@ -17,7 +17,7 @@ impl ResourceLimiterAsync for StoreLimitsAsync {
         &mut self,
         current: usize,
         desired: usize,
-        _maximum: Option<usize>,
+        maximum: Option<usize>,
     ) -> Result<bool> {
         let can_grow = if let Some(limit) = self.max_memory_size {
             desired <= limit
@@ -27,6 +27,15 @@ impl ResourceLimiterAsync for StoreLimitsAsync {
         if can_grow {
             self.memory_consumed =
                 (self.memory_consumed as i64 + (desired as i64 - current as i64)) as u64;
+        } else {
+            tracing::warn!(
+                "error.type" = "memory_limit_exceeded",
+                current,
+                desired,
+                maximum,
+                max_memory_size = self.max_memory_size,
+                "instance memory limit exceeded",
+            );
         }
         Ok(can_grow)
     }
