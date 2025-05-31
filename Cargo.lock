@@ -8319,6 +8319,7 @@ dependencies = [
  "spin-app",
  "spin-factors",
  "spin-loader",
+ "spin-telemetry",
  "tempfile",
  "toml",
 ]
@@ -8748,7 +8749,6 @@ dependencies = [
  "hyper 1.5.0",
  "hyper-util",
  "rustls 0.23.18",
- "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
  "serde_json",

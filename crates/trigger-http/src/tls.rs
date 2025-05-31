@@ -1,6 +1,6 @@
-use rustls_pemfile::private_key;
+use anyhow::Context;
+use rustls_pki_types::pem::PemObject;
 use std::{
-    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -35,40 +35,31 @@ impl TlsConfig {
 // load_certs parse and return the certs from the provided file
 fn load_certs(
     path: impl AsRef<Path>,
-) -> io::Result<Vec<rustls_pki_types::CertificateDer<'static>>> {
-    rustls_pemfile::certs(&mut io::BufReader::new(fs::File::open(path).map_err(
-        |err| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("failed to read cert file {:?}", err),
+) -> anyhow::Result<Vec<rustls_pki_types::CertificateDer<'static>>> {
+    rustls_pki_types::CertificateDer::pem_file_iter(&path)
+        .and_then(Iterator::collect)
+        .with_context(|| {
+            format!(
+                "failed to load certificate(s) from '{}'",
+                path.as_ref().display()
             )
-        },
-    )?))
-    .collect()
+        })
 }
 
 // parse and return the first private key from the provided file
-fn load_key(path: impl AsRef<Path>) -> io::Result<rustls_pki_types::PrivateKeyDer<'static>> {
-    private_key(&mut io::BufReader::new(fs::File::open(path).map_err(
-        |err| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("failed to read private key file {:?}", err),
-            )
-        },
-    )?))
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid private key"))
-    .transpose()
-    .ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "private key file contains no private keys",
+fn load_key(path: impl AsRef<Path>) -> anyhow::Result<rustls_pki_types::PrivateKeyDer<'static>> {
+    rustls_pki_types::PrivateKeyDer::from_pem_file(&path).with_context(|| {
+        format!(
+            "failed to load private key from '{}'",
+            path.as_ref().display()
         )
-    })?
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use rustls_pki_types::pem;
+
     use super::*;
 
     const TESTDATA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata");
@@ -76,56 +67,49 @@ mod tests {
     #[test]
     fn test_read_non_existing_cert() {
         let path = Path::new(TESTDATA_DIR).join("non-existing-file.pem");
-
-        let certs = load_certs(path);
-        assert!(certs.is_err());
-        assert_eq!(certs.err().unwrap().to_string(), "failed to read cert file Os { code: 2, kind: NotFound, message: \"No such file or directory\" }");
+        match load_certs(path).unwrap_err().downcast().unwrap() {
+            pem::Error::Io(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
+            other => panic!("expected Error::Io error got {other:?}"),
+        }
     }
 
     #[test]
     fn test_read_invalid_cert() {
         let path = Path::new(TESTDATA_DIR).join("invalid-cert.pem");
-
-        let certs = load_certs(path);
-        assert!(certs.is_err());
-        assert_eq!(
-            certs.err().unwrap().to_string(),
-            "section end \"-----END CERTIFICATE-----\" missing"
-        );
+        match load_certs(path).unwrap_err().downcast().unwrap() {
+            pem::Error::MissingSectionEnd { .. } => (),
+            other => panic!("expected Error::MissingSectionEnd got {other:?}"),
+        }
     }
 
     #[test]
     fn test_read_valid_cert() {
         let path = Path::new(TESTDATA_DIR).join("valid-cert.pem");
-
-        let certs = load_certs(path);
-        assert!(certs.is_ok());
-        assert_eq!(certs.unwrap().len(), 2);
+        let certs = load_certs(path).unwrap();
+        assert_eq!(certs.len(), 2);
     }
 
     #[test]
     fn test_read_non_existing_private_key() {
         let path = Path::new(TESTDATA_DIR).join("non-existing-file.pem");
-
-        let keys = load_key(path);
-        assert!(keys.is_err());
-        assert_eq!(keys.err().unwrap().to_string(), "failed to read private key file Os { code: 2, kind: NotFound, message: \"No such file or directory\" }");
+        match load_key(path).unwrap_err().downcast().unwrap() {
+            pem::Error::Io(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
+            other => panic!("expected Error::Io error got {other:?}"),
+        }
     }
 
     #[test]
     fn test_read_invalid_private_key() {
         let path = Path::new(TESTDATA_DIR).join("invalid-private-key.pem");
-
-        let keys = load_key(path);
-        assert!(keys.is_err());
-        assert_eq!(keys.err().unwrap().to_string(), "invalid private key");
+        match load_key(path).unwrap_err().downcast().unwrap() {
+            pem::Error::MissingSectionEnd { .. } => (),
+            other => panic!("expected Error::MissingSectionEnd got {other:?}"),
+        }
     }
 
     #[test]
     fn test_read_valid_private_key() {
         let path = Path::new(TESTDATA_DIR).join("valid-private-key.pem");
-
-        let keys = load_key(path);
-        assert!(keys.is_ok());
+        load_key(path).unwrap();
     }
 }
