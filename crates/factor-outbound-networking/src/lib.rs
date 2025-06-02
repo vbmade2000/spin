@@ -1,27 +1,31 @@
-mod config;
+mod allowed_hosts;
+mod blocked_networks;
 pub mod runtime_config;
+mod tls;
+
+use std::{collections::HashMap, sync::Arc};
 
 use futures_util::{
     future::{BoxFuture, Shared},
     FutureExt,
 };
-use runtime_config::RuntimeConfig;
 use spin_factor_variables::VariablesFactor;
 use spin_factor_wasi::{SocketAddrUse, WasiFactor};
 use spin_factors::{
     anyhow::{self, Context},
     ConfigureAppContext, Error, Factor, FactorInstanceBuilder, PrepareContext, RuntimeFactors,
 };
-use std::{collections::HashMap, sync::Arc};
+use url::Url;
 
-pub use config::{
+use crate::{runtime_config::RuntimeConfig, tls::TlsClientConfigs};
+
+pub use crate::allowed_hosts::{
     allowed_outbound_hosts, is_service_chaining_host, parse_service_chaining_target,
     validate_service_chaining_for_components, AllowedHostConfig, AllowedHostsConfig, HostConfig,
     OutboundUrl, SERVICE_CHAINING_DOMAIN_SUFFIX,
 };
-
-pub use runtime_config::ComponentTlsConfigs;
-use url::Url;
+pub use crate::blocked_networks::BlockedNetworks;
+pub use crate::tls::{ComponentTlsClientConfigs, TlsClientConfig};
 
 pub type SharedFutureResult<T> = Shared<BoxFuture<'static, Result<Arc<T>, Arc<anyhow::Error>>>>;
 
@@ -65,15 +69,19 @@ impl Factor for OutboundNetworkingFactor {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        let runtime_config = match ctx.take_runtime_config() {
-            Some(cfg) => cfg,
-            // The default RuntimeConfig provides default TLS client configs
-            None => RuntimeConfig::new([])?,
-        };
+        let RuntimeConfig {
+            client_tls_configs,
+            blocked_ip_networks: block_networks,
+            block_private_networks,
+        } = ctx.take_runtime_config().unwrap_or_default();
+
+        let blocked_networks = BlockedNetworks::new(block_networks, block_private_networks);
+        let tls_client_configs = TlsClientConfigs::new(client_tls_configs)?;
 
         Ok(AppState {
             component_allowed_hosts,
-            runtime_config,
+            blocked_networks,
+            tls_client_configs,
         })
     }
 
@@ -108,16 +116,19 @@ impl Factor for OutboundNetworkingFactor {
         .map(|res| res.map(Arc::new).map_err(Arc::new))
         .boxed()
         .shared();
+        let allowed_hosts = OutboundAllowedHosts {
+            allowed_hosts_future: allowed_hosts_future.clone(),
+            disallowed_host_handler: self.disallowed_host_handler.clone(),
+        };
+        let blocked_networks = ctx.app_state().blocked_networks.clone();
 
         match ctx.instance_builder::<WasiFactor>() {
             Ok(wasi_builder) => {
                 // Update Wasi socket allowed ports
-                let allowed_hosts = OutboundAllowedHosts {
-                    allowed_hosts_future: allowed_hosts_future.clone(),
-                    disallowed_host_handler: self.disallowed_host_handler.clone(),
-                };
+                let allowed_hosts = allowed_hosts.clone();
                 wasi_builder.outbound_socket_addr_check(move |addr, addr_use| {
                     let allowed_hosts = allowed_hosts.clone();
+                    let blocked_networks = blocked_networks.clone();
                     async move {
                         let scheme = match addr_use {
                             SocketAddrUse::TcpBind => return false,
@@ -126,13 +137,25 @@ impl Factor for OutboundNetworkingFactor {
                             | SocketAddrUse::UdpConnect
                             | SocketAddrUse::UdpOutgoingDatagram => "udp",
                         };
-                        allowed_hosts
+                        if !allowed_hosts
                             .check_url(&addr.to_string(), scheme)
                             .await
                             .unwrap_or(
                                 // TODO: should this trap (somehow)?
                                 false,
                             )
+                        {
+                            return false;
+                        }
+                        if blocked_networks.is_blocked(&addr) {
+                            tracing::error!(
+                                "error.type" = "destination_ip_prohibited",
+                                ?addr,
+                                "destination IP prohibited by runtime config"
+                            );
+                            return false;
+                        }
+                        true
                     }
                 });
             }
@@ -142,38 +165,43 @@ impl Factor for OutboundNetworkingFactor {
 
         let component_tls_configs = ctx
             .app_state()
-            .runtime_config
+            .tls_client_configs
             .get_component_tls_configs(ctx.app_component().id());
 
         Ok(InstanceBuilder {
-            allowed_hosts_future,
-            component_tls_configs,
-            disallowed_host_handler: self.disallowed_host_handler.clone(),
+            allowed_hosts,
+            blocked_networks: ctx.app_state().blocked_networks.clone(),
+            component_tls_client_configs: component_tls_configs,
         })
     }
 }
 
 pub struct AppState {
+    /// Component ID -> Allowed host list
     component_allowed_hosts: HashMap<String, Arc<[String]>>,
-    runtime_config: RuntimeConfig,
+    /// Blocked IP networks
+    blocked_networks: BlockedNetworks,
+    /// TLS client configs
+    tls_client_configs: TlsClientConfigs,
 }
 
 pub struct InstanceBuilder {
-    allowed_hosts_future: SharedFutureResult<AllowedHostsConfig>,
-    component_tls_configs: ComponentTlsConfigs,
-    disallowed_host_handler: Option<Arc<dyn DisallowedHostHandler>>,
+    allowed_hosts: OutboundAllowedHosts,
+    blocked_networks: BlockedNetworks,
+    component_tls_client_configs: ComponentTlsClientConfigs,
 }
 
 impl InstanceBuilder {
     pub fn allowed_hosts(&self) -> OutboundAllowedHosts {
-        OutboundAllowedHosts {
-            allowed_hosts_future: self.allowed_hosts_future.clone(),
-            disallowed_host_handler: self.disallowed_host_handler.clone(),
-        }
+        self.allowed_hosts.clone()
     }
 
-    pub fn component_tls_configs(&self) -> &ComponentTlsConfigs {
-        &self.component_tls_configs
+    pub fn blocked_networks(&self) -> BlockedNetworks {
+        self.blocked_networks.clone()
+    }
+
+    pub fn component_tls_configs(&self) -> ComponentTlsClientConfigs {
+        self.component_tls_client_configs.clone()
     }
 }
 

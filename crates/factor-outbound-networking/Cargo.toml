@@ -8,9 +8,9 @@ edition = { workspace = true }
 anyhow = { workspace = true }
 futures-util = { workspace = true }
 http = { workspace = true }
-ipnet = "2"
+ip_network = "0.4.1"
+ip_network_table = "0.2.0"
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true }
 serde = { workspace = true }
 spin-expressions = { path = "../expressions" }
@@ -35,8 +35,6 @@ wasmtime-wasi = { workspace = true }
 [features]
 default = ["spin-cli"]
 # Includes the runtime configuration handling used by the Spin CLI
-spin-cli = [
-  "dep:rustls-pemfile",
-]
+spin-cli = []
 [lints]
 workspace = true

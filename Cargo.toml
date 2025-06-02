@@ -150,8 +150,7 @@ rusqlite = "0.34"
 # In `rustls` turn off the `aws_lc_rs` default feature and turn on `ring`.
 # If both `aws_lc_rs` and `ring` are enabled, a panic at runtime will occur.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
-rustls-pemfile = "2.2"
-rustls-pki-types = "1.8"
+rustls-pki-types = "1.12"
 semver = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -168,9 +167,6 @@ toml_edit = "0.22"
 tracing = { version = "0.1", features = ["log"] }
 url = "2"
 walkdir = "2"
-wasi-common-preview1 = { version = "33.0.0", package = "wasi-common", features = [
-  "tokio",
-] }
 wasm-encoder = "0.230"
 wasm-metadata = "0.230"
 wasm-pkg-client = "0.10"
