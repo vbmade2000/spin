@@ -15,6 +15,9 @@ pub mod metrics;
 mod propagation;
 mod traces;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 pub use propagation::extract_trace_context;
 pub use propagation::inject_trace_context;
 
