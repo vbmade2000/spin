@@ -47,10 +47,10 @@ impl SpinRuntimeConfig {
     ) -> anyhow::Result<Option<super::RuntimeConfig>> {
         let maybe_blocked_networks = self
             .blocked_networks_from_table(table)
-            .context("parsing blocked_networks")?;
+            .context("failed to parse [outbound_networking] table")?;
         let maybe_tls_configs = self
             .tls_configs_from_table(table)
-            .context("parsing client_tls")?;
+            .context("failed to parse [[client_tls]] table")?;
 
         if maybe_blocked_networks.is_none() && maybe_tls_configs.is_none() {
             return Ok(None);
@@ -106,7 +106,7 @@ impl SpinRuntimeConfig {
             .into_iter()
             .map(|toml_config| self.load_tls_config(toml_config))
             .collect::<anyhow::Result<Vec<_>>>()
-            .context("failed to parse TLS configs from TOML")?;
+            .context("failed to parse TLS config")?;
         Ok(Some(tls_configs))
     }
 
@@ -124,12 +124,9 @@ impl SpinRuntimeConfig {
         } = toml_config;
         ensure!(
             !component_ids.is_empty(),
-            "[[client_tls]] 'component_ids' list may not be empty"
+            "'component_ids' list may not be empty"
         );
-        ensure!(
-            !hosts.is_empty(),
-            "[[client_tls]] 'hosts' list may not be empty"
-        );
+        ensure!(!hosts.is_empty(), "'hosts' list may not be empty");
 
         let components = component_ids.into_iter().map(Into::into).collect();
 
