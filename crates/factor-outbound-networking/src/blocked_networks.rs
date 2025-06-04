@@ -12,6 +12,8 @@ pub struct BlockedNetworks {
     /// A set of IP networks to be blocked
     networks: Arc<IpNetworkTable<()>>,
     /// If true, block all non-globally-routable networks, in addition to `networks`
+    ///
+    /// See: [`ip_network::Ipv4Network::is_global`] / [`ip_network::Ipv6Network::is_global`]
     block_private: bool,
 }
 
@@ -45,7 +47,16 @@ impl BlockedNetworks {
         if self.block_private && !IpNetwork::from(ip_addr).is_global() {
             return true;
         }
-        self.networks.longest_match(ip_addr).is_some()
+        if self.networks.longest_match(ip_addr).is_some() {
+            return true;
+        }
+        // Convert IPv4-compatible IPv6 addresses to IPv4 and check again to prevent bypass
+        if let IpAddr::V6(ipv6) = ip_addr {
+            if let Some(ipv4_compat) = ipv6.to_ipv4() {
+                return self.is_blocked(&IpAddr::V4(ipv4_compat));
+            }
+        }
+        false
     }
 
     /// Removes and returns any addresses with blocked IPs from the given Vec.
@@ -96,6 +107,7 @@ pub(crate) mod tests {
         let blocked = BlockedNetworks::new([cidr("123.123.0.0/16"), cidr("2001::/96")], false);
         assert!(blocked.is_blocked(&ip("123.123.123.123")));
         assert!(blocked.is_blocked(&ip("2001::1000")));
+        assert!(blocked.is_blocked(&ip("::ffff:123.123.123.123")));
         assert!(!blocked.is_blocked(&ip("123.100.100.100")));
         assert!(!blocked.is_blocked(&ip("2002::1000")));
     }
@@ -104,10 +116,20 @@ pub(crate) mod tests {
     fn test_is_blocked_private() {
         let redundant_private_cidr = cidr("10.0.0.0/8");
         let blocked = BlockedNetworks::new([redundant_private_cidr], true);
-        assert!(blocked.is_blocked(&ip("127.0.0.1")));
-        assert!(blocked.is_blocked(&ip("10.10.10.10")));
-        assert!(blocked.is_blocked(&ip("::1")));
-        assert!(blocked.is_blocked(&ip("fc00::f00d")));
+        for private in [
+            "0.0.0.0",
+            "10.10.10.10",
+            "100.64.1.1",
+            "127.0.0.1",
+            "169.254.0.1",
+            "192.0.0.1",
+            "::1",
+            "::ffff:10.10.10.10",
+            "fc00::f00d",
+        ] {
+            assert!(blocked.is_blocked(&ip(private)), "{private}");
+        }
+        // Public addresses not blocked
         assert!(!blocked.is_blocked(&ip("123.123.123.123")));
         assert!(!blocked.is_blocked(&ip("2600::beef")));
     }
