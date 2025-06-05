@@ -91,9 +91,12 @@ impl AllowedHostConfig {
     pub fn parse(url: impl Into<String>) -> anyhow::Result<Self> {
         let original = url.into();
         let url = original.trim();
-        let (scheme, rest) = url.split_once("://").with_context(|| {
-            format!("{url:?} does not contain a scheme (e.g., 'http://' or '*://')")
-        })?;
+        let Some((scheme, rest)) = url.split_once("://") else {
+            match url {
+                "*" | ":" | "" | "?" => bail!("{url:?} is not an allowed outbound host format.\nHosts must be in the form <scheme>://<host>[:<port>], with '*' wildcards allowed for each.\nIf you intended to allow all outbound networking, you can use '*://*:*' - this will obviate all network sandboxing.\nLearn more: https://spinframework.dev/v3/http-outbound#granting-http-permissions-to-components"),
+                _ => bail!("{url:?} does not contain a scheme (e.g., 'http://' or '*://')\nLearn more: https://spinframework.dev/v3/http-outbound#granting-http-permissions-to-components"),
+            }
+        };
         let (host, rest) = rest.rsplit_once(':').unwrap_or((rest, ""));
         let port = match rest.split_once('/') {
             Some((port, path)) => {
