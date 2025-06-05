@@ -9,7 +9,6 @@ anyhow = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
-ip_network = "0.4"
 reqwest = { workspace = true, features = ["gzip"] }
 rustls = { workspace = true }
 spin-factor-outbound-networking = { path = "../factor-outbound-networking" }

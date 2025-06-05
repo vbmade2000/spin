@@ -13,7 +13,7 @@ use http::{
 };
 use intercept::OutboundHttpInterceptor;
 use spin_factor_outbound_networking::{
-    ComponentTlsConfigs, OutboundAllowedHosts, OutboundNetworkingFactor,
+    BlockedNetworks, ComponentTlsClientConfigs, OutboundAllowedHosts, OutboundNetworkingFactor,
 };
 use spin_factors::{
     anyhow, ConfigureAppContext, Factor, PrepareContext, RuntimeFactors, SelfInstanceBuilder,
@@ -26,25 +26,9 @@ pub use wasmtime_wasi_http::{
     HttpResult,
 };
 
+#[derive(Default)]
 pub struct OutboundHttpFactor {
-    allow_private_ips: bool,
-}
-
-impl OutboundHttpFactor {
-    /// Create a new OutboundHttpFactor.
-    ///
-    /// If `allow_private_ips` is true, requests to private IP addresses will be allowed.
-    pub fn new(allow_private_ips: bool) -> Self {
-        Self { allow_private_ips }
-    }
-}
-
-impl Default for OutboundHttpFactor {
-    fn default() -> Self {
-        Self {
-            allow_private_ips: true,
-        }
-    }
+    _priv: (),
 }
 
 impl Factor for OutboundHttpFactor {
@@ -71,11 +55,12 @@ impl Factor for OutboundHttpFactor {
     ) -> anyhow::Result<Self::InstanceBuilder> {
         let outbound_networking = ctx.instance_builder::<OutboundNetworkingFactor>()?;
         let allowed_hosts = outbound_networking.allowed_hosts();
-        let component_tls_configs = outbound_networking.component_tls_configs().clone();
+        let blocked_networks = outbound_networking.blocked_networks();
+        let component_tls_configs = outbound_networking.component_tls_configs();
         Ok(InstanceState {
             wasi_http_ctx: WasiHttpCtx::new(),
             allowed_hosts,
-            allow_private_ips: self.allow_private_ips,
+            blocked_networks,
             component_tls_configs,
             self_request_origin: None,
             request_interceptor: None,
@@ -87,8 +72,8 @@ impl Factor for OutboundHttpFactor {
 pub struct InstanceState {
     wasi_http_ctx: WasiHttpCtx,
     allowed_hosts: OutboundAllowedHosts,
-    allow_private_ips: bool,
-    component_tls_configs: ComponentTlsConfigs,
+    blocked_networks: BlockedNetworks,
+    component_tls_configs: ComponentTlsClientConfigs,
     self_request_origin: Option<SelfRequestOrigin>,
     request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
     // Connection-pooling client for 'fermyon:spin/http' interface

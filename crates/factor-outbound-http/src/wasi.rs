@@ -1,11 +1,11 @@
-use std::{error::Error, net::IpAddr, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 use anyhow::Context;
 use http::{header::HOST, Request};
 use http_body_util::BodyExt;
-use ip_network::IpNetwork;
-use rustls::ClientConfig;
-use spin_factor_outbound_networking::{ComponentTlsConfigs, OutboundAllowedHosts};
+use spin_factor_outbound_networking::{
+    BlockedNetworks, ComponentTlsClientConfigs, OutboundAllowedHosts, TlsClientConfig,
+};
 use spin_factors::{wasmtime::component::ResourceTable, RuntimeFactorsInstanceState};
 use tokio::{net::TcpStream, time::timeout};
 use tracing::{field::Empty, instrument, Instrument};
@@ -97,7 +97,7 @@ impl WasiHttpView for WasiHttpImplInner<'_> {
                     self.state.component_tls_configs.clone(),
                     self.state.request_interceptor.clone(),
                     self.state.self_request_origin.clone(),
-                    self.state.allow_private_ips,
+                    self.state.blocked_networks.clone(),
                 )
                 .in_current_span(),
             ),
@@ -109,10 +109,10 @@ async fn send_request_impl(
     mut request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
     mut config: wasmtime_wasi_http::types::OutgoingRequestConfig,
     outbound_allowed_hosts: OutboundAllowedHosts,
-    component_tls_configs: ComponentTlsConfigs,
+    component_tls_configs: ComponentTlsClientConfigs,
     request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
     self_request_origin: Option<SelfRequestOrigin>,
-    allow_private_ips: bool,
+    blocked_networks: BlockedNetworks,
 ) -> anyhow::Result<Result<IncomingResponse, ErrorCode>> {
     // wasmtime-wasi-http fills in scheme and authority for relative URLs
     // (e.g. https://:443/<path>), which makes them hard to reason about.
@@ -196,7 +196,7 @@ async fn send_request_impl(
         span.record("server.port", port.as_u16());
     }
 
-    Ok(send_request_handler(request, config, tls_client_config, allow_private_ips).await)
+    Ok(send_request_handler(request, config, tls_client_config, blocked_networks).await)
 }
 
 /// This is a fork of wasmtime_wasi_http::default_send_request_handler function
@@ -210,8 +210,8 @@ async fn send_request_handler(
         first_byte_timeout,
         between_bytes_timeout,
     }: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    tls_client_config: Arc<ClientConfig>,
-    allow_private_ips: bool,
+    tls_client_config: TlsClientConfig,
+    blocked_networks: BlockedNetworks,
 ) -> Result<wasmtime_wasi_http::types::IncomingResponse, ErrorCode> {
     let authority_str = if let Some(authority) = request.uri().authority() {
         if authority.port().is_some() {
@@ -230,12 +230,15 @@ async fn send_request_handler(
         .map_err(|_| dns_error("address not available".into(), 0))?
         .collect::<Vec<_>>();
 
-    // Potentially filter out private IPs
-    if !allow_private_ips && !socket_addrs.is_empty() {
-        socket_addrs.retain(|addr| !is_private_ip(addr.ip()));
-        if socket_addrs.is_empty() {
-            return Err(ErrorCode::DestinationIpProhibited);
-        }
+    // Remove blocked IPs
+    let blocked_addrs = blocked_networks.remove_blocked(&mut socket_addrs);
+    if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
+        tracing::error!(
+            "error.type" = "destination_ip_prohibited",
+            ?blocked_addrs,
+            "all destination IP(s) prohibited by runtime config"
+        );
+        return Err(ErrorCode::DestinationIpProhibited);
     }
 
     let tcp_stream = timeout(connect_timeout, TcpStream::connect(socket_addrs.as_slice()))
@@ -257,7 +260,7 @@ async fn send_request_handler(
         #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
         {
             use rustls::pki_types::ServerName;
-            let connector = tokio_rustls::TlsConnector::from(tls_client_config);
+            let connector = tokio_rustls::TlsConnector::from(tls_client_config.inner());
             let mut parts = authority_str.split(':');
             let host = parts.next().unwrap_or(&authority_str);
             let domain = ServerName::try_from(host)
@@ -361,9 +364,4 @@ fn dns_error(rcode: String, info_code: u16) -> ErrorCode {
         rcode: Some(rcode),
         info_code: Some(info_code),
     })
-}
-
-/// Returns true if the IP is a private IP address.
-fn is_private_ip(ip: IpAddr) -> bool {
-    !IpNetwork::from(ip).is_global()
 }

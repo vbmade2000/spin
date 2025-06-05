@@ -1,3 +1,4 @@
+use spin_factor_outbound_networking::runtime_config::spin::SpinRuntimeConfig;
 use spin_factor_outbound_networking::OutboundNetworkingFactor;
 use spin_factor_variables::VariablesFactor;
 use spin_factor_wasi::{DummyFilesMounter, WasiFactor};
@@ -20,11 +21,19 @@ async fn configures_wasi_socket_addr_check() -> anyhow::Result<()> {
         variables: VariablesFactor::default(),
         networking: OutboundNetworkingFactor::new(),
     };
-    let env = TestEnvironment::new(factors).extend_manifest(toml! {
-        [component.test-component]
-        source = "does-not-exist.wasm"
-        allowed_outbound_hosts = ["*://192.0.2.1:12345"]
-    });
+    let env = TestEnvironment::new(factors)
+        .extend_manifest(toml! {
+            [component.test-component]
+            source = "does-not-exist.wasm"
+            allowed_outbound_hosts = ["*://123.0.2.1:12345", "*://123.123.0.1:443", "*://127.0.0.1:3000"]
+        })
+        .runtime_config(TestFactorsRuntimeConfig {
+            networking: SpinRuntimeConfig::new("").config_from_table(&toml! {
+                [outbound_networking]
+                block_networks = ["123.123.123.123/16", "private"]
+            })?,
+            ..Default::default()
+        })?;
     let mut state = env.build_instance_state().await?;
     let mut wasi = WasiFactor::get_wasi_impl(&mut state).unwrap();
 
@@ -33,11 +42,18 @@ async fn configures_wasi_socket_addr_check() -> anyhow::Result<()> {
 
     network
         .check_socket_addr(
-            "192.0.2.1:12345".parse().unwrap(),
+            "123.0.2.1:12345".parse().unwrap(),
             SocketAddrUse::TcpConnect,
         )
         .await?;
-    for not_allowed in ["192.0.2.1:25", "192.0.2.2:12345"] {
+    for not_allowed in [
+        // Blocked by allowed_outbound_hosts
+        "123.0.2.1:25",
+        "123.0.2.2:12345",
+        // Blocked by block_networks
+        "123.123.0.1:443",
+        "127.0.0.1:3000",
+    ] {
         assert_eq!(
             network
                 .check_socket_addr(not_allowed.parse().unwrap(), SocketAddrUse::TcpConnect)

@@ -8,7 +8,7 @@ use spin_factor_llm::{spin as llm, LlmFactor};
 use spin_factor_outbound_http::OutboundHttpFactor;
 use spin_factor_outbound_mqtt::OutboundMqttFactor;
 use spin_factor_outbound_mysql::OutboundMysqlFactor;
-use spin_factor_outbound_networking::runtime_config::spin::SpinTlsRuntimeConfig;
+use spin_factor_outbound_networking::runtime_config::spin::SpinRuntimeConfig as OutboundNetworkingSpinRuntimeConfig;
 use spin_factor_outbound_networking::OutboundNetworkingFactor;
 use spin_factor_outbound_pg::OutboundPgFactor;
 use spin_factor_outbound_redis::OutboundRedisFactor;
@@ -132,7 +132,9 @@ where
             .and_then(Path::parent)
             .map(ToOwned::to_owned);
         let state_dir = toml_resolver.state_dir()?;
-        let tls_resolver = runtime_config_dir.clone().map(SpinTlsRuntimeConfig::new);
+        let outbound_networking = runtime_config_dir
+            .clone()
+            .map(OutboundNetworkingSpinRuntimeConfig::new);
         let key_value_resolver = key_value_config_resolver(runtime_config_dir, state_dir.clone());
         let sqlite_resolver = sqlite_config_resolver(state_dir.clone())
             .context("failed to resolve sqlite runtime config")?;
@@ -144,7 +146,7 @@ where
         let source = TomlRuntimeConfigSource::new(
             toml_resolver,
             &key_value_resolver,
-            tls_resolver.as_ref(),
+            outbound_networking.as_ref(),
             &sqlite_resolver,
         );
 
@@ -296,7 +298,7 @@ impl<'a> TomlResolver<'a> {
 pub struct TomlRuntimeConfigSource<'a, 'b> {
     toml: TomlResolver<'b>,
     key_value: &'a key_value::RuntimeConfigResolver,
-    tls: Option<&'a SpinTlsRuntimeConfig>,
+    outbound_networking: Option<&'a OutboundNetworkingSpinRuntimeConfig>,
     sqlite: &'a sqlite::RuntimeConfigResolver,
 }
 
@@ -304,13 +306,13 @@ impl<'a, 'b> TomlRuntimeConfigSource<'a, 'b> {
     pub fn new(
         toml_resolver: TomlResolver<'b>,
         key_value: &'a key_value::RuntimeConfigResolver,
-        tls: Option<&'a SpinTlsRuntimeConfig>,
+        outbound_networking: Option<&'a OutboundNetworkingSpinRuntimeConfig>,
         sqlite: &'a sqlite::RuntimeConfigResolver,
     ) -> Self {
         Self {
             toml: toml_resolver,
             key_value,
-            tls,
+            outbound_networking,
             sqlite,
         }
     }
@@ -329,7 +331,7 @@ impl FactorRuntimeConfigSource<OutboundNetworkingFactor> for TomlRuntimeConfigSo
         &mut self,
     ) -> anyhow::Result<Option<<OutboundNetworkingFactor as spin_factors::Factor>::RuntimeConfig>>
     {
-        let Some(tls) = self.tls else {
+        let Some(tls) = self.outbound_networking else {
             return Ok(None);
         };
         tls.config_from_table(&self.toml.table)

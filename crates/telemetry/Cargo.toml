@@ -18,4 +18,5 @@ tracing-opentelemetry = { version = "0.29", default-features = false, features =
 tracing-subscriber = { version = "0.3", default-features = false, features = ["smallvec", "fmt", "ansi", "std", "env-filter", "json", "registry"] }
 
 [features]
+testing = []
 tracing-log-compat = ["tracing-subscriber/tracing-log", "tracing-opentelemetry/tracing-log"]

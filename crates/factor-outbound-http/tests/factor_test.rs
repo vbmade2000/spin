@@ -111,13 +111,23 @@ async fn test_instance_state(
     let factors = TestFactors {
         variables: VariablesFactor::default(),
         networking: OutboundNetworkingFactor::new(),
-        http: OutboundHttpFactor::new(allow_private_ips),
+        http: OutboundHttpFactor::default(),
     };
-    let env = TestEnvironment::new(factors).extend_manifest(toml! {
-        [component.test-component]
-        source = "does-not-exist.wasm"
-        allowed_outbound_hosts = [allowed_outbound_hosts]
-    });
+    let env = TestEnvironment::new(factors)
+        .extend_manifest(toml! {
+            [component.test-component]
+            source = "does-not-exist.wasm"
+            allowed_outbound_hosts = [allowed_outbound_hosts]
+        })
+        .runtime_config(TestFactorsRuntimeConfig {
+            networking: Some(
+                spin_factor_outbound_networking::runtime_config::RuntimeConfig {
+                    block_private_networks: !allow_private_ips,
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        })?;
     env.build_instance_state().await
 }
 

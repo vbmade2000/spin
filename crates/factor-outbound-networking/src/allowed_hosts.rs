@@ -190,7 +190,7 @@ pub enum HostConfig {
     AnySubdomain(String),
     ToSelf,
     List(Vec<String>),
-    Cidr(ipnet::IpNet),
+    Cidr(ip_network::IpNetwork),
 }
 
 impl HostConfig {
@@ -209,7 +209,7 @@ impl HostConfig {
             bail!("host lists are not yet supported")
         }
 
-        if let Ok(net) = host.parse::<ipnet::IpNet>() {
+        if let Ok(net) = ip_network::IpNetwork::from_str_truncate(host) {
             return Ok(Self::Cidr(net));
         }
 
@@ -244,7 +244,7 @@ impl HostConfig {
                 let Ok(ip) = host.parse::<std::net::IpAddr>() else {
                     return false;
                 };
-                c.contains(&ip)
+                c.contains(ip)
             }
         }
     }
@@ -566,6 +566,8 @@ mod test {
         spin_expressions::PreparedResolver::default()
     }
 
+    use ip_network::{IpNetwork, Ipv4Network, Ipv6Network};
+
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -762,8 +764,8 @@ mod test {
         assert_eq!(
             AllowedHostConfig::new(
                 SchemeConfig::Any,
-                HostConfig::Cidr(ipnet::IpNet::V4(
-                    ipnet::Ipv4Net::new(Ipv4Addr::new(127, 0, 0, 0), 24).unwrap()
+                HostConfig::Cidr(IpNetwork::V4(
+                    Ipv4Network::new(Ipv4Addr::new(127, 0, 0, 0), 24).unwrap()
                 )),
                 PortConfig::new(80)
             ),
@@ -773,8 +775,8 @@ mod test {
         assert_eq!(
             AllowedHostConfig::new(
                 SchemeConfig::Any,
-                HostConfig::Cidr(ipnet::IpNet::V6(
-                    ipnet::Ipv6Net::new(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 8).unwrap()
+                HostConfig::Cidr(IpNetwork::V6(
+                    Ipv6Network::new(Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 8).unwrap()
                 )),
                 PortConfig::new(80)
             ),
