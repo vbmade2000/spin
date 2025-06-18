@@ -13,7 +13,8 @@ use http::{
 };
 use intercept::OutboundHttpInterceptor;
 use spin_factor_outbound_networking::{
-    BlockedNetworks, ComponentTlsClientConfigs, OutboundAllowedHosts, OutboundNetworkingFactor,
+    config::{allowed_hosts::OutboundAllowedHosts, blocked_networks::BlockedNetworks},
+    ComponentTlsClientConfigs, OutboundNetworkingFactor,
 };
 use spin_factors::{
     anyhow, ConfigureAppContext, Factor, PrepareContext, RuntimeFactors, SelfInstanceBuilder,
