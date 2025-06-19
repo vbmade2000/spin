@@ -8195,24 +8195,22 @@ dependencies = [
  "futures-util",
  "http 1.1.0",
  "ip_network",
- "ip_network_table",
  "rustls 0.23.18",
  "rustls-pki-types",
  "serde",
- "spin-expressions",
  "spin-factor-variables",
  "spin-factor-wasi",
  "spin-factors",
  "spin-factors-test",
  "spin-locked-app",
  "spin-manifest",
+ "spin-outbound-networking-config",
  "spin-serde",
  "tempfile",
  "tokio",
  "toml",
  "tracing",
  "url",
- "urlencoding",
  "wasmtime-wasi",
  "webpki-roots",
 ]
@@ -8466,9 +8464,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "spin-common",
- "spin-factor-outbound-networking",
  "spin-locked-app",
  "spin-manifest",
+ "spin-outbound-networking-config",
  "spin-serde",
  "tempfile",
  "terminal",
@@ -8542,6 +8540,21 @@ dependencies = [
  "wasm-encoder 0.230.0",
  "wit-component 0.230.0",
  "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "spin-outbound-networking-config"
+version = "3.4.0-pre0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "http 1.1.0",
+ "ip_network",
+ "ip_network_table",
+ "spin-expressions",
+ "tracing",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]
