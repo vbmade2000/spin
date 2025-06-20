@@ -8354,11 +8354,24 @@ dependencies = [
  "serde",
  "spin-app",
  "spin-factor-outbound-http",
+ "spin-http-routes",
  "toml",
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "spin-http-routes"
+version = "3.4.0-pre0"
+dependencies = [
+ "anyhow",
+ "indexmap 2.7.1",
+ "percent-encoding",
+ "routefinder",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
