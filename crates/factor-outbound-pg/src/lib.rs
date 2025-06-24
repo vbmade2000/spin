@@ -25,7 +25,10 @@ impl<CF: ClientFactory> Factor for OutboundPgFactor<CF> {
         ctx.link_bindings(spin_world::v1::postgres::add_to_linker::<_, FactorData<Self>>)?;
         ctx.link_bindings(spin_world::v2::postgres::add_to_linker::<_, FactorData<Self>>)?;
         ctx.link_bindings(
-            spin_world::spin::postgres::postgres::add_to_linker::<_, FactorData<Self>>,
+            spin_world::spin::postgres3_0_0::postgres::add_to_linker::<_, FactorData<Self>>,
+        )?;
+        ctx.link_bindings(
+            spin_world::spin::postgres4_0_0::postgres::add_to_linker::<_, FactorData<Self>>,
         )?;
         Ok(())
     }
