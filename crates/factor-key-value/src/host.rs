@@ -2,7 +2,7 @@ use super::{Cas, SwapError};
 use anyhow::{Context, Result};
 use spin_core::{async_trait, wasmtime::component::Resource};
 use spin_resource_table::Table;
-use spin_telemetry::traces::{self, Fault};
+use spin_telemetry::traces::{self, Blame};
 use spin_world::v2::key_value;
 use spin_world::wasi::keyvalue as wasi_keyvalue;
 use std::{collections::HashSet, sync::Arc};
@@ -72,7 +72,7 @@ impl KeyValueDispatch {
     pub fn get_store<T: 'static>(&self, store: Resource<T>) -> anyhow::Result<&Arc<dyn Store>> {
         let res = self.stores.get(store.rep()).context("invalid store");
         if let Err(err) = &res {
-            traces::mark_as_error(err, Some(Fault::Host));
+            traces::mark_as_error(err, Some(Blame::Host));
         }
         res
     }
@@ -187,11 +187,11 @@ impl key_value::HostStore for KeyValueDispatch {
 
 /// Make sure that infrastructure related errors are tracked in the current span.
 fn track_error_on_span(err: Error) -> Error {
-    let fault = match err {
-        Error::NoSuchStore | Error::AccessDenied => Fault::Guest,
-        Error::StoreTableFull | Error::Other(_) => Fault::Host,
+    let blame = match err {
+        Error::NoSuchStore | Error::AccessDenied => Blame::Guest,
+        Error::StoreTableFull | Error::Other(_) => Blame::Host,
     };
-    traces::mark_as_error(&err, Some(fault));
+    traces::mark_as_error(&err, Some(blame));
     err
 }
 

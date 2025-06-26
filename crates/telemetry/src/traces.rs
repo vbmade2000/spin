@@ -67,27 +67,27 @@ pub(crate) fn otel_tracing_layer<S: Subscriber + for<'span> LookupSpan<'span>>(
 ///
 /// This can be used to filter errors in telemetry or logging systems.
 #[derive(Debug)]
-pub enum Fault {
+pub enum Blame {
     /// The error is most likely caused by the guest.
     Guest,
     /// The error might have been caused by the host.
     Host,
 }
 
-impl Fault {
+impl Blame {
     fn as_str(&self) -> &'static str {
         match self {
-            Fault::Guest => "guest",
-            Fault::Host => "host",
+            Blame::Guest => "guest",
+            Blame::Host => "host",
         }
     }
 }
 
-/// Marks the current span as an error with the given error message and optional fault type.
-pub fn mark_as_error<E: std::fmt::Display>(err: &E, fault: Option<Fault>) {
+/// Marks the current span as an error with the given error message and optional blame.
+pub fn mark_as_error<E: std::fmt::Display>(err: &E, blame: Option<Blame>) {
     let current_span = tracing::Span::current();
     current_span.set_status(opentelemetry::trace::Status::error(err.to_string()));
-    if let Some(fault) = fault {
-        current_span.set_attribute("error.fault", fault.as_str());
+    if let Some(blame) = blame {
+        current_span.set_attribute("error.blame", blame.as_str());
     }
 }

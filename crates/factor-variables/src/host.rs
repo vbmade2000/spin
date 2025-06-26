@@ -1,5 +1,5 @@
 use spin_factors::anyhow;
-use spin_telemetry::traces::{self, Fault};
+use spin_telemetry::traces::{self, Blame};
 use spin_world::{v1, v2::variables, wasi::config as wasi_config};
 use tracing::instrument;
 
@@ -76,11 +76,11 @@ impl wasi_config::store::Host for InstanceState {
 /// Convert a `spin_expressions::Error` to a `variables::Error`, setting the current span's status and fault attribute.
 fn expressions_to_variables_err(err: spin_expressions::Error) -> variables::Error {
     use spin_expressions::Error;
-    let fault = match err {
-        Error::InvalidName(_) | Error::InvalidTemplate(_) | Error::Undefined(_) => Fault::Guest,
-        Error::Provider(_) => Fault::Host,
+    let blame = match err {
+        Error::InvalidName(_) | Error::InvalidTemplate(_) | Error::Undefined(_) => Blame::Guest,
+        Error::Provider(_) => Blame::Host,
     };
-    traces::mark_as_error(&err, Some(fault));
+    traces::mark_as_error(&err, Some(blame));
     match err {
         Error::InvalidName(msg) => variables::Error::InvalidName(msg),
         Error::Undefined(msg) => variables::Error::Undefined(msg),
