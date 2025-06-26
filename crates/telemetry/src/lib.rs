@@ -15,6 +15,9 @@ pub mod metrics;
 mod propagation;
 mod traces;
 
+pub use opentelemetry;
+pub use tracing_opentelemetry::OpenTelemetrySpanExt;
+
 #[cfg(feature = "testing")]
 pub mod testing;
 
