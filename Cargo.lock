@@ -8124,6 +8124,7 @@ dependencies = [
  "spin-key-value-spin",
  "spin-locked-app",
  "spin-resource-table",
+ "spin-telemetry",
  "spin-world",
  "tempfile",
  "thiserror 2.0.12",
