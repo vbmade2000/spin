@@ -1,5 +1,5 @@
 use spin_factors::anyhow;
-use spin_telemetry::OpenTelemetrySpanExt as _;
+use spin_telemetry::traces::{self, Fault};
 use spin_world::{v1, v2::variables, wasi::config as wasi_config};
 use tracing::instrument;
 
@@ -73,19 +73,18 @@ impl wasi_config::store::Host for InstanceState {
     }
 }
 
+/// Convert a `spin_expressions::Error` to a `variables::Error`, setting the current span's status and fault attribute.
 fn expressions_to_variables_err(err: spin_expressions::Error) -> variables::Error {
     use spin_expressions::Error;
+    let fault = match err {
+        Error::InvalidName(_) | Error::InvalidTemplate(_) | Error::Undefined(_) => Fault::Guest,
+        Error::Provider(_) => Fault::Host,
+    };
+    traces::mark_as_error(&err, Some(fault));
     match err {
         Error::InvalidName(msg) => variables::Error::InvalidName(msg),
         Error::Undefined(msg) => variables::Error::Undefined(msg),
-        other @ Error::InvalidTemplate(_) => variables::Error::Other(format!("{other}")),
-        Error::Provider(err) => {
-            // This error may not be caused by bad user input, so set the span status to error.
-            let current_span = tracing::Span::current();
-            current_span.set_status(spin_telemetry::opentelemetry::trace::Status::error(
-                err.to_string(),
-            ));
-            variables::Error::Provider(err.to_string())
-        }
+        Error::InvalidTemplate(_) => variables::Error::Other(format!("{err}")),
+        Error::Provider(err) => variables::Error::Provider(err.to_string()),
     }
 }

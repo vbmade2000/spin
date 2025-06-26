@@ -2,7 +2,7 @@ use super::{Cas, SwapError};
 use anyhow::{Context, Result};
 use spin_core::{async_trait, wasmtime::component::Resource};
 use spin_resource_table::Table;
-use spin_telemetry::OpenTelemetrySpanExt as _;
+use spin_telemetry::traces::{self, Fault};
 use spin_world::v2::key_value;
 use spin_world::wasi::keyvalue as wasi_keyvalue;
 use std::{collections::HashSet, sync::Arc};
@@ -72,10 +72,7 @@ impl KeyValueDispatch {
     pub fn get_store<T: 'static>(&self, store: Resource<T>) -> anyhow::Result<&Arc<dyn Store>> {
         let res = self.stores.get(store.rep()).context("invalid store");
         if let Err(err) = &res {
-            let current_span = tracing::Span::current();
-            current_span.set_status(spin_telemetry::opentelemetry::trace::Status::error(
-                err.to_string(),
-            ));
+            traces::mark_as_error(err, Some(Fault::Host));
         }
         res
     }
@@ -190,12 +187,11 @@ impl key_value::HostStore for KeyValueDispatch {
 
 /// Make sure that infrastructure related errors are tracked in the current span.
 fn track_error_on_span(err: Error) -> Error {
-    if let Error::Other(_) | Error::StoreTableFull = &err {
-        let current_span = tracing::Span::current();
-        current_span.set_status(spin_telemetry::opentelemetry::trace::Status::error(
-            err.to_string(),
-        ));
-    }
+    let fault = match err {
+        Error::NoSuchStore | Error::AccessDenied => Fault::Guest,
+        Error::StoreTableFull | Error::Other(_) => Fault::Host,
+    };
+    traces::mark_as_error(&err, Some(fault));
     err
 }
 
