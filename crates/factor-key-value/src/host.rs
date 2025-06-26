@@ -129,7 +129,7 @@ impl key_value::HostStore for KeyValueDispatch {
         .await)
     }
 
-    #[instrument(name = "spin_key_value.get", skip(self, store, key), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get", skip_all, fields(otel.kind = "client"))]
     async fn get(
         &mut self,
         store: Resource<key_value::Store>,
@@ -139,7 +139,7 @@ impl key_value::HostStore for KeyValueDispatch {
         Ok(store.get(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.set", skip(self, store, key, value), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.set", skip_all, fields(otel.kind = "client"))]
     async fn set(
         &mut self,
         store: Resource<key_value::Store>,
@@ -150,7 +150,7 @@ impl key_value::HostStore for KeyValueDispatch {
         Ok(store.set(&key, &value).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.delete", skip(self, store, key), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.delete", skip_all, fields(otel.kind = "client"))]
     async fn delete(
         &mut self,
         store: Resource<key_value::Store>,
@@ -160,7 +160,7 @@ impl key_value::HostStore for KeyValueDispatch {
         Ok(store.delete(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.exists", skip(self, store, key), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.exists", skip_all, fields(otel.kind = "client"))]
     async fn exists(
         &mut self,
         store: Resource<key_value::Store>,
@@ -170,7 +170,7 @@ impl key_value::HostStore for KeyValueDispatch {
         Ok(store.exists(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.get_keys", skip(self, store), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get_keys", skip_all, fields(otel.kind = "client"))]
     async fn get_keys(
         &mut self,
         store: Resource<key_value::Store>,
@@ -205,7 +205,7 @@ fn to_wasi_err(e: Error) -> wasi_keyvalue::store::Error {
 }
 
 impl wasi_keyvalue::store::Host for KeyValueDispatch {
-    #[instrument(name = "wasi_key_value.open", skip(self, identifier), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.open", skip_all, fields(otel.kind = "client"))]
     async fn open(
         &mut self,
         identifier: String,
@@ -233,7 +233,7 @@ impl wasi_keyvalue::store::Host for KeyValueDispatch {
 
 use wasi_keyvalue::store::Bucket;
 impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
-    #[instrument(name = "wasi_key_value.get", skip(self, self_, key), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.get", skip_all, fields(otel.kind = "client"))]
     async fn get(
         &mut self,
         self_: Resource<Bucket>,
@@ -243,7 +243,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.get(&key).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "wasi_key_value.set", skip(self, self_, key, value), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.set", skip_all, fields(otel.kind = "client"))]
     async fn set(
         &mut self,
         self_: Resource<Bucket>,
@@ -254,7 +254,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.set(&key, &value).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "wasi_key_value.delete", skip(self, self_, key), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.delete", skip_all, fields(otel.kind = "client"))]
     async fn delete(
         &mut self,
         self_: Resource<Bucket>,
@@ -264,7 +264,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.delete(&key).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "wasi_key_value.exists", skip(self, self_, key), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.exists", skip_all, fields(otel.kind = "client"))]
     async fn exists(
         &mut self,
         self_: Resource<Bucket>,
@@ -274,7 +274,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.exists(&key).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "wasi_key_value.list_keys", skip(self, self_, cursor), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value.list_keys", skip_all, fields(otel.kind = "client"))]
     async fn list_keys(
         &mut self,
         self_: Resource<Bucket>,
@@ -299,7 +299,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
 }
 
 impl wasi_keyvalue::batch::Host for KeyValueDispatch {
-    #[instrument(name = "spin_key_value.get_many", skip(self, bucket, keys), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get_many", skip_all, fields(otel.kind = "client"))]
     #[allow(clippy::type_complexity)]
     async fn get_many(
         &mut self,
@@ -313,7 +313,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
         store.get_many(keys).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.set_many", skip(self, bucket, key_values), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.set_many", skip_all, fields(otel.kind = "client"))]
     async fn set_many(
         &mut self,
         bucket: Resource<wasi_keyvalue::batch::Bucket>,
@@ -326,7 +326,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
         store.set_many(key_values).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.delete_many", skip(self, bucket, keys), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.delete_many", skip_all, fields(otel.kind = "client"))]
     async fn delete_many(
         &mut self,
         bucket: Resource<wasi_keyvalue::batch::Bucket>,
@@ -341,7 +341,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
 }
 
 impl wasi_keyvalue::atomics::HostCas for KeyValueDispatch {
-    #[instrument(name = "wasi_key_value_cas.new", skip(self, bucket, key), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value_cas.new", skip_all, fields(otel.kind = "client"))]
     async fn new(
         &mut self,
         bucket: Resource<wasi_keyvalue::atomics::Bucket>,
@@ -364,7 +364,7 @@ impl wasi_keyvalue::atomics::HostCas for KeyValueDispatch {
             .map(Resource::new_own)
     }
 
-    #[instrument(name = "wasi_key_value_cas.current", skip(self, cas), fields(otel.kind = "client"))]
+    #[instrument(name = "wasi_key_value_cas.current", skip_all, fields(otel.kind = "client"))]
     async fn current(
         &mut self,
         cas: Resource<wasi_keyvalue::atomics::Cas>,
@@ -389,7 +389,7 @@ impl wasi_keyvalue::atomics::Host for KeyValueDispatch {
         Ok(error)
     }
 
-    #[instrument(name = "spin_key_value.increment", skip(self, bucket, key, delta), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.increment", skip_all, fields(otel.kind = "client"))]
     async fn increment(
         &mut self,
         bucket: Resource<wasi_keyvalue::atomics::Bucket>,
@@ -400,7 +400,7 @@ impl wasi_keyvalue::atomics::Host for KeyValueDispatch {
         store.increment(key, delta).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.swap", skip(self, cas_res, value), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.swap", skip_all, fields(otel.kind = "client"))]
     async fn swap(
         &mut self,
         cas_res: Resource<atomics::Cas>,
