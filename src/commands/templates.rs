@@ -178,7 +178,7 @@ impl Install {
                 }
 
                 println!();
-                println!("{}", table);
+                println!("{table}");
             }
             if !skipped.is_empty() {
                 println!();
@@ -193,7 +193,7 @@ impl Install {
                 }
 
                 println!();
-                println!("{}", table);
+                println!("{table}");
             }
         }
     }
@@ -366,7 +366,7 @@ impl Upgrade {
             }
 
             println!();
-            println!("{}", table);
+            println!("{table}");
         }
 
         println!();
@@ -384,7 +384,7 @@ impl Upgrade {
             }
 
             println!();
-            println!("{}", table);
+            println!("{table}");
             println!();
         }
     }
@@ -547,7 +547,7 @@ impl List {
                 table.add_row(row);
             }
 
-            println!("{}", table);
+            println!("{table}");
         }
 
         if !warnings.is_empty() {
@@ -573,7 +573,7 @@ impl List {
             .collect();
 
         let json_text = serde_json::to_string_pretty(&json_vals)?;
-        println!("{}", json_text);
+        println!("{json_text}");
         Ok(())
     }
 }
@@ -603,13 +603,13 @@ impl ProgressReporter for ConsoleProgressReporter {
 fn skipped_reason_text(reason: &SkippedReason) -> String {
     match reason {
         SkippedReason::AlreadyExists => "Already exists".to_owned(),
-        SkippedReason::InvalidManifest(msg) => format!("Template load error: {}", msg),
+        SkippedReason::InvalidManifest(msg) => format!("Template load error: {msg}"),
     }
 }
 
 fn list_warn_reason_text(reason: &InstalledTemplateWarning) -> String {
     match reason {
-        InstalledTemplateWarning::InvalidManifest(msg) => format!("Template load error: {}", msg),
+        InstalledTemplateWarning::InvalidManifest(msg) => format!("Template load error: {msg}"),
     }
 }
 
@@ -625,8 +625,7 @@ pub(crate) async fn prompt_install_default_templates(
         Ok(Some(template_manager.list().await?.templates))
     } else {
         println!(
-            "You can install the default templates later with 'spin templates install --git {}'",
-            DEFAULT_TEMPLATE_REPO
+            "You can install the default templates later with 'spin templates install --git {DEFAULT_TEMPLATE_REPO}'"
         );
         Ok(None)
     }

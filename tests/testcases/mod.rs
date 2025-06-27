@@ -336,7 +336,7 @@ pub fn bootstrap_smoke_test(
                     .unwrap_or_default()
                     .clone_into(&mut custom_path);
             }
-            build.env(key, format!("{}:{}", custom_path, path));
+            build.env(key, format!("{custom_path}:{path}"));
         } else {
             build.env(key, value);
         }

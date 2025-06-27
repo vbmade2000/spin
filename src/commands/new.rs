@@ -143,7 +143,7 @@ impl TemplateNewCommandCore {
         let template = match &template_id {
             Some(template_id) => match template_manager
                 .get(template_id)
-                .with_context(|| format!("Error retrieving template {}", template_id))?
+                .with_context(|| format!("Error retrieving template {template_id}"))?
             {
                 Some(template) => template,
                 None => match prompt_template(&template_manager, &variant, &[template_id.clone()])
@@ -416,7 +416,7 @@ mod tests {
     /// Writes to a new temporary file, closes it, and returns its path.
     fn create_tempfile(content: &str) -> Result<TempPath> {
         let mut file = NamedTempFile::new()?;
-        write!(file, "{}", content).unwrap();
+        write!(file, "{content}").unwrap();
         Ok(file.into_temp_path())
     }
 
@@ -445,11 +445,7 @@ mod tests {
         ];
         for content in bad_content {
             let file = create_tempfile(content).unwrap();
-            assert!(
-                values_from_file(&file).await.is_err(),
-                "content: {}",
-                content
-            );
+            assert!(values_from_file(&file).await.is_err(), "content: {content}");
         }
     }
 
