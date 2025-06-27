@@ -5,6 +5,7 @@ use opentelemetry_sdk::{
     Resource,
 };
 use tracing::Subscriber;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::{registry::LookupSpan, EnvFilter, Layer};
 
 use crate::detector::SpinResourceDetector;
@@ -60,4 +61,33 @@ pub(crate) fn otel_tracing_layer<S: Subscriber + for<'span> LookupSpan<'span>>(
         .with_tracer(tracer_provider.tracer("spin"))
         .with_threads(false)
         .with_filter(env_filter))
+}
+
+/// Indicate whether the error is more likely caused by the guest or the host.
+///
+/// This can be used to filter errors in telemetry or logging systems.
+#[derive(Debug)]
+pub enum Blame {
+    /// The error is most likely caused by the guest.
+    Guest,
+    /// The error might have been caused by the host.
+    Host,
+}
+
+impl Blame {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Blame::Guest => "guest",
+            Blame::Host => "host",
+        }
+    }
+}
+
+/// Marks the current span as an error with the given error message and optional blame.
+pub fn mark_as_error<E: std::fmt::Display>(err: &E, blame: Option<Blame>) {
+    let current_span = tracing::Span::current();
+    current_span.set_status(opentelemetry::trace::Status::error(err.to_string()));
+    if let Some(blame) = blame {
+        current_span.set_attribute("error.blame", blame.as_str());
+    }
 }

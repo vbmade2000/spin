@@ -11,11 +11,12 @@ spin-core = { path = "../core" }
 spin-factors = { path = "../factors" }
 spin-locked-app = { path = "../locked-app" }
 spin-resource-table = { path = "../table" }
+spin-telemetry = { path = "../telemetry" }
 spin-world = { path = "../world" }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt"] }
 toml = { workspace = true }
 tracing = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 spin-factors-test = { path = "../factors-test" }

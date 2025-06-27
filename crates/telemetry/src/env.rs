@@ -77,6 +77,7 @@ pub(crate) fn otel_sdk_disabled() -> bool {
 }
 
 /// The protocol to use for OTLP exporter.
+#[derive(Debug)]
 pub(crate) enum OtlpProtocol {
     Grpc,
     HttpProtobuf,

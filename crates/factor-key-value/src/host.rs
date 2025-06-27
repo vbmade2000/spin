@@ -2,10 +2,11 @@ use super::{Cas, SwapError};
 use anyhow::{Context, Result};
 use spin_core::{async_trait, wasmtime::component::Resource};
 use spin_resource_table::Table;
+use spin_telemetry::traces::{self, Blame};
 use spin_world::v2::key_value;
 use spin_world::wasi::keyvalue as wasi_keyvalue;
 use std::{collections::HashSet, sync::Arc};
-use tracing::{instrument, Level};
+use tracing::instrument;
 
 const DEFAULT_STORE_TABLE_CAPACITY: u32 = 256;
 
@@ -69,7 +70,11 @@ impl KeyValueDispatch {
     }
 
     pub fn get_store<T: 'static>(&self, store: Resource<T>) -> anyhow::Result<&Arc<dyn Store>> {
-        self.stores.get(store.rep()).context("invalid store")
+        let res = self.stores.get(store.rep()).context("invalid store");
+        if let Err(err) = &res {
+            traces::mark_as_error(err, Some(Blame::Host));
+        }
+        res
     }
 
     pub fn get_cas<T: 'static>(&self, cas: Resource<T>) -> Result<&Arc<dyn Cas>> {
@@ -106,7 +111,7 @@ impl KeyValueDispatch {
 impl key_value::Host for KeyValueDispatch {}
 
 impl key_value::HostStore for KeyValueDispatch {
-    #[instrument(name = "spin_key_value.open", skip(self), err(level = Level::INFO), fields(otel.kind = "client", kv.backend=self.manager.summary(&name).unwrap_or("unknown".to_string())))]
+    #[instrument(name = "spin_key_value.open", skip(self), err, fields(otel.kind = "client", kv.backend=self.manager.summary(&name).unwrap_or("unknown".to_string())))]
     async fn open(&mut self, name: String) -> Result<Result<Resource<key_value::Store>, Error>> {
         Ok(async {
             if self.allowed_stores.contains(&name) {
@@ -124,17 +129,17 @@ impl key_value::HostStore for KeyValueDispatch {
         .await)
     }
 
-    #[instrument(name = "spin_key_value.get", skip(self, store, key), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get", skip_all, fields(otel.kind = "client"))]
     async fn get(
         &mut self,
         store: Resource<key_value::Store>,
         key: String,
     ) -> Result<Result<Option<Vec<u8>>, Error>> {
         let store = self.get_store(store)?;
-        Ok(store.get(&key).await)
+        Ok(store.get(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.set", skip(self, store, key, value), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.set", skip_all, fields(otel.kind = "client"))]
     async fn set(
         &mut self,
         store: Resource<key_value::Store>,
@@ -142,36 +147,36 @@ impl key_value::HostStore for KeyValueDispatch {
         value: Vec<u8>,
     ) -> Result<Result<(), Error>> {
         let store = self.get_store(store)?;
-        Ok(store.set(&key, &value).await)
+        Ok(store.set(&key, &value).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.delete", skip(self, store, key), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.delete", skip_all, fields(otel.kind = "client"))]
     async fn delete(
         &mut self,
         store: Resource<key_value::Store>,
         key: String,
     ) -> Result<Result<(), Error>> {
         let store = self.get_store(store)?;
-        Ok(store.delete(&key).await)
+        Ok(store.delete(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.exists", skip(self, store, key), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.exists", skip_all, fields(otel.kind = "client"))]
     async fn exists(
         &mut self,
         store: Resource<key_value::Store>,
         key: String,
     ) -> Result<Result<bool, Error>> {
         let store = self.get_store(store)?;
-        Ok(store.exists(&key).await)
+        Ok(store.exists(&key).await.map_err(track_error_on_span))
     }
 
-    #[instrument(name = "spin_key_value.get_keys", skip(self, store), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get_keys", skip_all, fields(otel.kind = "client"))]
     async fn get_keys(
         &mut self,
         store: Resource<key_value::Store>,
     ) -> Result<Result<Vec<String>, Error>> {
         let store = self.get_store(store)?;
-        Ok(store.get_keys().await)
+        Ok(store.get_keys().await.map_err(track_error_on_span))
     }
 
     async fn drop(&mut self, store: Resource<key_value::Store>) -> Result<()> {
@@ -180,8 +185,18 @@ impl key_value::HostStore for KeyValueDispatch {
     }
 }
 
+/// Make sure that infrastructure related errors are tracked in the current span.
+fn track_error_on_span(err: Error) -> Error {
+    let blame = match err {
+        Error::NoSuchStore | Error::AccessDenied => Blame::Guest,
+        Error::StoreTableFull | Error::Other(_) => Blame::Host,
+    };
+    traces::mark_as_error(&err, Some(blame));
+    err
+}
+
 fn to_wasi_err(e: Error) -> wasi_keyvalue::store::Error {
-    match e {
+    match track_error_on_span(e) {
         Error::AccessDenied => wasi_keyvalue::store::Error::AccessDenied,
         Error::NoSuchStore => wasi_keyvalue::store::Error::NoSuchStore,
         Error::StoreTableFull => wasi_keyvalue::store::Error::Other("store table full".to_string()),
@@ -190,6 +205,7 @@ fn to_wasi_err(e: Error) -> wasi_keyvalue::store::Error {
 }
 
 impl wasi_keyvalue::store::Host for KeyValueDispatch {
+    #[instrument(name = "wasi_key_value.open", skip_all, fields(otel.kind = "client"))]
     async fn open(
         &mut self,
         identifier: String,
@@ -217,6 +233,7 @@ impl wasi_keyvalue::store::Host for KeyValueDispatch {
 
 use wasi_keyvalue::store::Bucket;
 impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
+    #[instrument(name = "wasi_key_value.get", skip_all, fields(otel.kind = "client"))]
     async fn get(
         &mut self,
         self_: Resource<Bucket>,
@@ -226,6 +243,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.get(&key).await.map_err(to_wasi_err)
     }
 
+    #[instrument(name = "wasi_key_value.set", skip_all, fields(otel.kind = "client"))]
     async fn set(
         &mut self,
         self_: Resource<Bucket>,
@@ -236,6 +254,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.set(&key, &value).await.map_err(to_wasi_err)
     }
 
+    #[instrument(name = "wasi_key_value.delete", skip_all, fields(otel.kind = "client"))]
     async fn delete(
         &mut self,
         self_: Resource<Bucket>,
@@ -245,6 +264,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.delete(&key).await.map_err(to_wasi_err)
     }
 
+    #[instrument(name = "wasi_key_value.exists", skip_all, fields(otel.kind = "client"))]
     async fn exists(
         &mut self,
         self_: Resource<Bucket>,
@@ -254,6 +274,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
         store.exists(&key).await.map_err(to_wasi_err)
     }
 
+    #[instrument(name = "wasi_key_value.list_keys", skip_all, fields(otel.kind = "client"))]
     async fn list_keys(
         &mut self,
         self_: Resource<Bucket>,
@@ -278,7 +299,7 @@ impl wasi_keyvalue::store::HostBucket for KeyValueDispatch {
 }
 
 impl wasi_keyvalue::batch::Host for KeyValueDispatch {
-    #[instrument(name = "spin_key_value.get_many", skip(self, bucket, keys), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.get_many", skip_all, fields(otel.kind = "client"))]
     #[allow(clippy::type_complexity)]
     async fn get_many(
         &mut self,
@@ -292,7 +313,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
         store.get_many(keys).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.set_many", skip(self, bucket, key_values), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.set_many", skip_all, fields(otel.kind = "client"))]
     async fn set_many(
         &mut self,
         bucket: Resource<wasi_keyvalue::batch::Bucket>,
@@ -305,7 +326,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
         store.set_many(key_values).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.delete_many", skip(self, bucket, keys), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.delete_many", skip_all, fields(otel.kind = "client"))]
     async fn delete_many(
         &mut self,
         bucket: Resource<wasi_keyvalue::batch::Bucket>,
@@ -320,6 +341,7 @@ impl wasi_keyvalue::batch::Host for KeyValueDispatch {
 }
 
 impl wasi_keyvalue::atomics::HostCas for KeyValueDispatch {
+    #[instrument(name = "wasi_key_value_cas.new", skip_all, fields(otel.kind = "client"))]
     async fn new(
         &mut self,
         bucket: Resource<wasi_keyvalue::atomics::Bucket>,
@@ -342,6 +364,7 @@ impl wasi_keyvalue::atomics::HostCas for KeyValueDispatch {
             .map(Resource::new_own)
     }
 
+    #[instrument(name = "wasi_key_value_cas.current", skip_all, fields(otel.kind = "client"))]
     async fn current(
         &mut self,
         cas: Resource<wasi_keyvalue::atomics::Cas>,
@@ -366,7 +389,7 @@ impl wasi_keyvalue::atomics::Host for KeyValueDispatch {
         Ok(error)
     }
 
-    #[instrument(name = "spin_key_value.increment", skip(self, bucket, key, delta), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.increment", skip_all, fields(otel.kind = "client"))]
     async fn increment(
         &mut self,
         bucket: Resource<wasi_keyvalue::atomics::Bucket>,
@@ -377,7 +400,7 @@ impl wasi_keyvalue::atomics::Host for KeyValueDispatch {
         store.increment(key, delta).await.map_err(to_wasi_err)
     }
 
-    #[instrument(name = "spin_key_value.swap", skip(self, cas_res, value), err(level = Level::INFO), fields(otel.kind = "client"))]
+    #[instrument(name = "spin_key_value.swap", skip_all, fields(otel.kind = "client"))]
     async fn swap(
         &mut self,
         cas_res: Resource<atomics::Cas>,
@@ -424,8 +447,8 @@ use spin_world::v1::key_value::Error as LegacyError;
 use spin_world::wasi::keyvalue::atomics;
 use spin_world::wasi::keyvalue::atomics::{CasError, HostCas};
 
-fn to_legacy_error(value: key_value::Error) -> LegacyError {
-    match value {
+fn to_legacy_error(err: Error) -> LegacyError {
+    match err {
         Error::StoreTableFull => LegacyError::StoreTableFull,
         Error::NoSuchStore => LegacyError::NoSuchStore,
         Error::AccessDenied => LegacyError::AccessDenied,

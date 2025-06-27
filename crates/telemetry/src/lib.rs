@@ -13,7 +13,7 @@ mod env;
 pub mod logs;
 pub mod metrics;
 mod propagation;
-mod traces;
+pub mod traces;
 
 #[cfg(feature = "testing")]
 pub mod testing;
