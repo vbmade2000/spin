@@ -14,7 +14,7 @@ use tokio::process::Command;
 const BADGER_GRACE_PERIOD_MILLIS: u64 = 50;
 
 fn override_flag() -> String {
-    format!("--{}", PLUGIN_OVERRIDE_COMPATIBILITY_CHECK_FLAG)
+    format!("--{PLUGIN_OVERRIDE_COMPATIBILITY_CHECK_FLAG}")
 }
 
 // Returns true if the argument was removed from the list
@@ -369,7 +369,7 @@ mod test {
             )
         );
 
-        let cmd_with_args_override = format!("example arg1 arg2 {}", override_flag)
+        let cmd_with_args_override = format!("example arg1 arg2 {override_flag}")
             .split(' ')
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
@@ -382,7 +382,7 @@ mod test {
             )
         );
 
-        let cmd_with_args_override = format!("example {} arg1 arg2", override_flag)
+        let cmd_with_args_override = format!("example {override_flag} arg1 arg2")
             .split(' ')
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
@@ -395,7 +395,7 @@ mod test {
             )
         );
 
-        let cmd_with_args_override = format!("{} example arg1 arg2", override_flag)
+        let cmd_with_args_override = format!("{override_flag} example arg1 arg2")
             .split(' ')
             .map(|s| s.to_string())
             .collect::<Vec<String>>();

@@ -683,7 +683,7 @@ impl List {
         let json_vals: Vec<_> = plugins.iter().map(json_list_format).collect();
 
         let json_text = serde_json::to_string_pretty(&json_vals)?;
-        println!("{}", json_text);
+        println!("{json_text}");
         Ok(())
     }
 }

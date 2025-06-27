@@ -26,7 +26,7 @@ impl std::fmt::Display for ExitStatusError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let _ = write!(f, "subprocess exited with status: ");
         if let Some(status) = self.status {
-            writeln!(f, "{}", status)
+            writeln!(f, "{status}")
         } else {
             writeln!(f, "unknown")
         }

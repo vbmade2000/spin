@@ -51,7 +51,7 @@ fn main() {
         let default_toolchain = default_toolchain.split(['-', ' ']).next().unwrap();
 
         let toolchain_override = if current_toolchain != default_toolchain {
-            format!(" +{}", current_toolchain)
+            format!(" +{current_toolchain}")
         } else {
             String::new()
         };
@@ -59,8 +59,7 @@ fn main() {
         println!(
             r#"
 error: the `wasm32-wasip1` target is not installed
-    = help: consider downloading the target with `rustup{} target add wasm32-wasip1`"#,
-            toolchain_override
+    = help: consider downloading the target with `rustup{toolchain_override} target add wasm32-wasip1`"#
         );
         process::exit(1);
     }
