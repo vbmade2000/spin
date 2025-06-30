@@ -4,7 +4,7 @@ use clap::Args;
 
 #[derive(Debug, Args, PartialEq)]
 #[clap(
-    about = "Package and upload an application to the Fermyon Cloud.",
+    about = "Package and upload an application to a deployment environment.",
     allow_hyphen_values = true,
     disable_help_flag = true
 )]
@@ -16,7 +16,7 @@ pub struct DeployCommand {
 
 #[derive(Debug, Args, PartialEq)]
 #[clap(
-    about = "Log into the Fermyon Cloud.",
+    about = "Log into a deployment environment.",
     allow_hyphen_values = true,
     disable_help_flag = true
 )]
@@ -26,9 +26,20 @@ pub struct LoginCommand {
     args: Vec<String>,
 }
 
+/// Transitional for compatibility: this will be removed as part of vendor-neutrality work.
+const DEFAULT_DEPLOY_PLUGIN: &str = "cloud";
+
+/// The environment variable for setting the plugin to be used for operations relating
+/// to remote hosts. This allows the `spin deploy` and `spin login` shortcuts instead of
+/// `spin whatever deploy` etc.
+const DEPLOY_PLUGIN_ENV: &str = "SPIN_DEPLOY_PLUGIN";
+
 impl DeployCommand {
     pub async fn run(self, app: clap::App<'_>) -> Result<()> {
-        let mut cmd = vec!["cloud".to_string(), "deploy".to_string()];
+        const CMD: &str = "deploy";
+
+        let deploy_plugin = deployment_plugin(CMD)?;
+        let mut cmd = vec![deploy_plugin, CMD.to_string()];
         cmd.append(&mut self.args.clone());
         execute_external_subcommand(cmd, app).await
     }
@@ -36,8 +47,22 @@ impl DeployCommand {
 
 impl LoginCommand {
     pub async fn run(self, app: clap::App<'_>) -> Result<()> {
-        let mut cmd = vec!["cloud".to_string(), "login".to_string()];
+        const CMD: &str = "login";
+
+        let deploy_plugin = deployment_plugin(CMD)?;
+        let mut cmd = vec![deploy_plugin, CMD.to_string()];
         cmd.append(&mut self.args.clone());
         execute_external_subcommand(cmd, app).await
+    }
+}
+
+fn deployment_plugin(cmd: &str) -> anyhow::Result<String> {
+    match std::env::var(DEPLOY_PLUGIN_ENV) {
+        Ok(v) => Ok(v),
+        Err(std::env::VarError::NotPresent) => {
+            terminal::warn!("`spin {cmd}` will soon need to be told which deployment plugin to use.\nRun a plugin command (e.g. `spin {DEFAULT_DEPLOY_PLUGIN} {cmd}`), or set the `{DEPLOY_PLUGIN_ENV}` environment variable, instead.\nDefaulting to `{DEFAULT_DEPLOY_PLUGIN}` plugin.");
+            Ok(DEFAULT_DEPLOY_PLUGIN.to_string())
+        }
+        Err(_) => anyhow::bail!("{DEPLOY_PLUGIN_ENV} was defined but its value could not be read"),
     }
 }
