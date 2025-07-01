@@ -19,10 +19,19 @@ pub struct AppManifest {
     pub spin_manifest_version: FixedVersion<2>,
     /// `[application]`
     pub application: AppDetails,
-    /// `[variables]`
+    /// Application configuration variables. These can be set via environment variables, or
+    /// from sources such as Hashicorp Vault or Azure KeyVault by using a runtime config file.
+    /// They are not available directly to components: use a component variable to ingest them.
+    ///
+    /// Learn more: https://spinframework.dev/variables, https://spinframework.dev/dynamic-configuration#application-variables-runtime-configuration
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub variables: Map<LowerSnakeId, Variable>,
-    /// `[[trigger.<type>]]`
+    /// The triggers to which the application responds. Most triggers can appear
+    /// multiple times with different parameters: for example, the `http` trigger may
+    /// appear multiple times with different routes, or the `redis` trigger with
+    /// different channels.
+    ///
+    /// Example: `[[trigger.http]]`
     #[serde(rename = "trigger")]
     #[schemars(with = "json_schema::TriggerSchema")]
     pub triggers: Map<String, Vec<Trigger>>,
@@ -49,18 +58,36 @@ impl AppManifest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AppDetails {
-    /// `name = "my-app"`
+    /// The name of the application.
+    ///
+    /// Example: `name = "my-app"`
     pub name: String,
-    /// `version = "1.0.0"`
+    /// The application version. This should be a valid semver version.
+    ///
+    /// Example: `version = "1.0.0"`
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// `description = "App description"`
+    /// A human-readable description of the application.
+    ///
+    /// Example: `description = "App description"`
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// The author(s) of the application.
+    ///
     /// `authors = ["author@example.com"]`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authors: Vec<String>,
-    /// `[application.triggers.<type>]`
+    /// Application-level settings for the trigger types used in the application.
+    /// The possible values are trigger type-specific.
+    ///
+    /// Example:
+    ///
+    /// ```ignore
+    /// [application.triggers.redis]
+    /// address = "redis://notifications.example.com:6379"
+    /// ```
+    ///
+    /// Learn more (Redis example): https://spinframework.dev/redis-trigger#setting-a-default-server
     #[serde(rename = "trigger", default, skip_serializing_if = "Map::is_empty")]
     #[schemars(schema_with = "json_schema::map_of_toml_tables")]
     pub trigger_global_configs: Map<String, toml::Table>,
@@ -70,15 +97,36 @@ pub struct AppDetails {
     pub tool: Map<String, toml::Table>,
 }
 
-/// Trigger configuration
+/// Trigger configuration. A trigger maps an event of the trigger's type (e.g.
+/// an HTTP request on route `/shop`, a Redis message on channel `orders`) to
+/// a Spin component.
+///
+/// The trigger manifest contains additional fields which depend on the trigger
+/// type. For the `http` type, these additional fields are `route` (required) and
+/// `executor` (optional). For the `redis` type, the additional fields are
+/// `channel` (required) and `address` (optional). For other types, see the trigger
+/// documentation.
+///
+/// Learn more: https://spinframework.dev/http-trigger, https://spinframework.dev/redis-trigger
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Trigger {
-    /// `id = "trigger-id"`
+    /// Optional identifier for the trigger.
+    ///
+    /// Example: `id = "trigger-id"`
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
-    /// `component = ...`
+    /// The component that Spin should run when the trigger occurs. For HTTP triggers,
+    /// this is the HTTP request handler for the trigger route. This is typically
+    /// the ID of an entry in the `[component]` table, although you can also write
+    /// the component out as the value of this field.
+    ///
+    /// Example: `component = "shop-handler"`
+    ///
+    /// Learn more: https://spinframework.dev/triggers#triggers-and-components
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<ComponentSpec>,
+    /// Reserved for future use.
+    ///
     /// `components = { ... }`
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub components: Map<String, OneOrManyComponentSpecs>,
@@ -120,100 +168,226 @@ impl TryFrom<toml::Value> for ComponentSpec {
     }
 }
 
-/// Component dependency
+/// Specifies how to satisfy an import dependency of the component. This may be one of:
+///
+/// - A semantic versioning constraint for the package version to use. Spin fetches the latest matching version of the package whose name matches the dependency name from the default registry.
+///
+/// Example: `"my:dep/import" = ">= 0.1.0"`
+///
+/// - A package from a registry.
+///
+/// Example: `"my:dep/import" = { version = "0.1.0", registry = "registry.io", ...}`
+///
+/// - A package from a filesystem path.
+///
+/// Example: `"my:dependency" = { path = "path/to/component.wasm", export = "my-export" }`
+///
+/// - A package from an HTTP URL.
+///
+/// Example: `"my:import" = { url = "https://example.com/component.wasm", sha256 = "sha256:..." }`
+///
+/// Learn more: https://spinframework.dev/v3/writing-apps#using-component-dependencies
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ComponentDependency {
     /// `... = ">= 0.1.0"`
+    #[schemars(description = "")] // schema docs are on the parent
     Version(String),
     /// `... = { version = "0.1.0", registry = "registry.io", ...}`
+    #[schemars(description = "")] // schema docs are on the parent
     Package {
-        /// Package version requirement
+        /// A semantic versioning constraint for the package version to use. Required. Spin
+        /// fetches the latest matching version from the specified registry, or from
+        /// the default registry if no registry is specified.
+        ///
+        /// Example: `"my:dep/import" = { version = ">= 0.1.0" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-registry
         version: String,
-        /// Optional registry spec
+        /// The registry that hosts the package. If omitted, this defaults to your
+        /// system default registry.
+        ///
+        /// Example: `"my:dep/import" = { registry = "registry.io", version = " 0.1.0" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-registry
         registry: Option<String>,
-        /// Optional package name `foo:bar`. If not specified, the package name
-        /// is inferred from the DependencyName key.
+        /// The name of the package to use. If omitted, this defaults to the package name of the
+        /// imported interface.
+        ///
+        /// Example: `"my:dep/import" = { package = "your:implementation", version = " 0.1.0" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-registry
         package: Option<String>,
-        /// Optional export name
+        /// The name of the export in the package. If omitted, this defaults to the name of the import.
+        ///
+        /// Example: `"my:dep/import" = { export = "your:impl/export", version = " 0.1.0" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-registry
         export: Option<String>,
     },
     /// `... = { path = "path/to/component.wasm", export = "my-export" }`
+    #[schemars(description = "")] // schema docs are on the parent
     Local {
-        /// Path to Wasm
+        /// The path to the Wasm file that implements the dependency.
+        ///
+        /// Example: `"my:dep/import" = { path = "path/to/component.wasm" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-local-component
         path: PathBuf,
-        /// Optional export name
+        /// The name of the export in the package. If omitted, this defaults to the name of the import.
+        ///
+        /// Example: `"my:dep/import" = { export = "your:impl/export", path = "path/to/component.wasm" }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-local-component
         export: Option<String>,
     },
     /// `... = { url = "https://example.com/component.wasm", sha256 = "..." }`
+    #[schemars(description = "")] // schema docs are on the parent
     HTTP {
-        /// URL to Wasm
+        /// The URL to the Wasm component that implements the dependency.
+        ///
+        /// Example: `"my:dep/import" = { url = "https://example.com/component.wasm", sha256 = "sha256:..." }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-url
         url: String,
-        /// SHA256 Checksum of the component. The string should start with 'sha256:'
+        /// The SHA256 digest of the Wasm file. This is required for integrity checking. Must begin with `sha256:`.
+        ///
+        /// Example: `"my:dep/import" = { sha256 = "sha256:...", ... }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-url
         digest: String,
-        /// Optional export name
+        /// The name of the export in the package. If omitted, this defaults to the name of the import.
+        ///
+        /// Example: `"my:dep/import" = { export = "your:impl/export", ... }`
+        ///
+        /// Learn more: https://spinframework.dev/writing-apps#dependencies-from-a-url
         export: Option<String>,
     },
 }
 
-/// Component definition
+/// A Spin component.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Component {
-    /// `source = ...`
+    /// The file, package, or URL containing the component Wasm binary.
+    ///
+    /// Example: `source = "bin/cart.wasm"`
+    ///
+    /// Learn more: https://spinframework.dev/writing-apps#the-component-source
     pub source: ComponentSource,
-    /// `description = "Component description"`
+    /// A human-readable description of the component.
+    ///
+    /// Example: `description = "Shopping cart"`
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
-    /// `variables = { name = "{{ app_var }}"}`
+    /// Configuration variables available to the component. Names must be
+    /// in `lower_snake_case`. Values are strings, and may refer
+    /// to application variables using `{{ ... }}` syntax.
+    ///
+    /// `variables = { users_endpoint = "https://{{ api_host }}/users"}`
+    ///
+    /// Learn more: https://spinframework.dev/variables#adding-variables-to-your-applications
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub variables: Map<LowerSnakeId, String>,
-    /// `environment = { VAR = "value" }`
+    /// Environment variables to be set for the Wasm module.
+    ///
+    /// `environment = { DB_URL = "mysql://spin:spin@localhost/dev" }`
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub environment: Map<String, String>,
-    /// `files = [...]`
+    /// The files the component is allowed to read. Each list entry is either:
+    ///
+    /// - a glob pattern (e.g. "assets/**/*.jpg"); or
+    ///
+    /// - a source-destination pair indicating where a host directory should be mapped in the guest (e.g. { source = "assets", destination = "/" })
+    ///
+    /// Learn more: https://spinframework.dev/writing-apps#including-files-with-components
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<WasiFilesMount>,
-    /// `exclude_files = ["secrets/*"]`
+    /// Any files or glob patterns that should not be available to the
+    /// Wasm module at runtime, even though they match a `files`` entry.
+    ///
+    /// Example: `exclude_files = ["secrets/*"]`
+    ///
+    /// Learn more: https://spinframework.dev/writing-apps#including-files-with-components
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_files: Vec<String>,
-    /// `allowed_http_hosts = ["example.com"]`
+    /// Deprecated. Use `allowed_outbound_hosts` instead.
+    ///
+    /// Example: `allowed_http_hosts = ["example.com"]`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[deprecated]
     pub allowed_http_hosts: Vec<String>,
-    /// `allowed_outbound_hosts = ["redis://myredishost.com:6379"]`
+    /// The network destinations which the component is allowed to access.
+    /// Each entry is in the form "(scheme)://(host)[:port]". Each element
+    /// allows * as a wildcard e.g. "https://\*" (HTTPS on the default port
+    /// to any destination) or "\*://localhost:\*" (any protocol to any port on
+    /// localhost). The host part allows segment wildcards for subdomains
+    /// e.g. "https://\*.example.com". Application variables are allowed using
+    /// `{{ my_var }}`` syntax.
+    ///
+    /// Example: `allowed_outbound_hosts = ["redis://myredishost.com:6379"]`
+    ///
+    /// Learn more: https://spinframework.dev/http-outbound#granting-http-permissions-to-components
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(with = "Vec<json_schema::AllowedOutboundHost>")]
     pub allowed_outbound_hosts: Vec<String>,
-    /// `key_value_stores = ["default", "my-store"]`
+    /// The key-value stores which the component is allowed to access. Stores are identified
+    /// by label e.g. "default" or "customer". Stores other than "default" must be mapped
+    /// to a backing store in the runtime config.
+    ///
+    /// Example: `key_value_stores = ["default", "my-store"]`
+    ///
+    /// Learn more: https://spinframework.dev/kv-store-api-guide#custom-key-value-stores
     #[serde(
         default,
         with = "kebab_or_snake_case",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[schemars(with = "Vec<String>")]
+    #[schemars(with = "Vec<json_schema::KeyValueStore>")]
     pub key_value_stores: Vec<String>,
-    /// `sqlite_databases = ["default", "my-database"]`
+    /// The SQLite databases which the component is allowed to access. Databases are identified
+    /// by label e.g. "default" or "analytics". Databases other than "default" must be mapped
+    /// to a backing store in the runtime config. Use "spin up --sqlite" to run database setup scripts.
+    ///
+    /// Example: `sqlite_databases = ["default", "my-database"]`
+    ///
+    /// Learn more: https://spinframework.dev/sqlite-api-guide#preparing-an-sqlite-database
     #[serde(
         default,
         with = "kebab_or_snake_case",
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[schemars(with = "Vec<String>")]
+    #[schemars(with = "Vec<json_schema::SqliteDatabase>")]
     pub sqlite_databases: Vec<String>,
-    /// `ai_models = ["llama2-chat"]`
+    /// The AI models which the component is allowed to access. For local execution, you must
+    /// download all models; for hosted execution, you should check which models are available
+    /// in your target environment.
+    ///
+    /// Example: `ai_models = ["llama2-chat"]`
+    ///
+    /// Learn more: https://spinframework.dev/serverless-ai-api-guide#using-serverless-ai-from-applications
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(with = "Vec<json_schema::AIModel>")]
     pub ai_models: Vec<KebabId>,
-    /// Build configuration
+    /// The component build configuration.
+    ///
+    /// Learn more: https://spinframework.dev/build
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<ComponentBuildConfig>,
     /// Settings for custom tools or plugins. Spin ignores this field.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     #[schemars(schema_with = "json_schema::map_of_toml_tables")]
     pub tool: Map<String, toml::Table>,
-    /// If true, allow dependencies to inherit configuration.
+    /// If true, dependencies can invoke Spin APIs with the same permissions as the main
+    /// component. If false, dependencies have no permissions (e.g. network,
+    /// key-value stores, SQLite databases).
+    ///
+    /// Learn more: https://spinframework.dev/writing-apps#dependency-permissions
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dependencies_inherit_configuration: bool,
-    /// Component dependencies
+    /// Specifies how to satisfy Wasm Component Model imports of this component.
+    ///
+    /// Learn more: https://spinframework.dev/writing-apps#using-component-dependencies
     #[serde(default, skip_serializing_if = "ComponentDependencies::is_empty")]
     pub dependencies: ComponentDependencies,
 }
