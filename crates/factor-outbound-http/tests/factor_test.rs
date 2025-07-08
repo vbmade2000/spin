@@ -24,15 +24,16 @@ async fn allowed_host_is_allowed() -> anyhow::Result<()> {
     let mut state = test_instance_state("https://*", true).await?;
     let mut wasi_http = OutboundHttpFactor::get_wasi_http_impl(&mut state).unwrap();
 
-    // [100::] is an IPv6 "black hole", which should always fail
+    // [100::] is the IPv6 "Discard Prefix", which should always fail
     let req = Request::get("https://[100::1]:443").body(Default::default())?;
     let mut future_resp = wasi_http.send_request(req, test_request_config())?;
     future_resp.ready().await;
 
-    // We don't want to make an actual network request, so treat "connection refused" as success
+    // Different systems handle the discard prefix differently; some will
+    // immediately reject it while others will silently let it time out
     match future_resp.unwrap_ready().unwrap() {
-        Ok(_) => bail!("expected Err, got Ok"),
-        Err(err) => assert!(matches!(err, ErrorCode::ConnectionRefused), "{err:?}"),
+        Err(ErrorCode::ConnectionRefused | ErrorCode::ConnectionTimeout) => (),
+        other => bail!("expected Err(ConnectionRefused | ConnectionTimeout), got {other:?}"),
     };
     Ok(())
 }
@@ -40,6 +41,7 @@ async fn allowed_host_is_allowed() -> anyhow::Result<()> {
 #[tokio::test]
 async fn self_request_smoke_test() -> anyhow::Result<()> {
     let mut state = test_instance_state("http://self", true).await?;
+    // [100::] is the IPv6 "Discard Prefix", which should always fail
     let origin = SelfRequestOrigin::from_uri(&Uri::from_static("http://[100::1]"))?;
     state.http.set_self_request_origin(origin);
 
@@ -48,10 +50,11 @@ async fn self_request_smoke_test() -> anyhow::Result<()> {
     let mut future_resp = wasi_http.send_request(req, test_request_config())?;
     future_resp.ready().await;
 
-    // We don't want to make an actual network request, so treat "connection refused" as success
+    // Different systems handle the discard prefix differently; some will
+    // immediately reject it while others will silently let it time out
     match future_resp.unwrap_ready().unwrap() {
-        Ok(_) => bail!("expected Err, got Ok"),
-        Err(err) => assert!(matches!(err, ErrorCode::ConnectionRefused), "{err:?}"),
+        Err(ErrorCode::ConnectionRefused | ErrorCode::ConnectionTimeout) => (),
+        other => bail!("expected Err(ConnectionRefused | ConnectionTimeout), got {other:?}"),
     };
     Ok(())
 }
@@ -134,8 +137,8 @@ async fn test_instance_state(
 fn test_request_config() -> OutgoingRequestConfig {
     OutgoingRequestConfig {
         use_tls: false,
-        connect_timeout: Duration::from_secs(60),
-        first_byte_timeout: Duration::from_secs(60),
-        between_bytes_timeout: Duration::from_secs(60),
+        connect_timeout: Duration::from_millis(1),
+        first_byte_timeout: Duration::from_millis(1),
+        between_bytes_timeout: Duration::from_millis(1),
     }
 }
