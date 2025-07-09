@@ -82,6 +82,10 @@ impl Default for Config {
         inner.native_unwind_info(false);
 
         if use_pooling_allocator_by_default() {
+            // Baseline for the maximum number of instances in spin through
+            // which a number of other defaults are derived below.
+            let max_instances = env("SPIN_MAX_INSTANCE_COUNT", 1_000);
+
             // By default enable the pooling instance allocator in Wasmtime. This
             // drastically reduces syscall/kernel overhead for wasm execution,
             // especially in async contexts where async stacks must be allocated.
@@ -92,7 +96,40 @@ impl Default for Config {
             // supported though as an escape valve for if this is a problem.
             let mut pooling_config = PoolingAllocationConfig::default();
             pooling_config
-                .total_component_instances(env("SPIN_WASMTIME_INSTANCE_COUNT", 1_000))
+                // Configuration parameters which affect the total size of the
+                // allocation pool as well as the maximum number of concurrently
+                // live instances at once. These can be configured individually
+                // but otherwise default to a factor-of-`max_instances` above.
+                //
+                // * Component instances are the maximum live number of
+                //   component instances or instantiations. In other words this
+                //   is the maximal concurrency that Spin can serve in terms of
+                //   HTTP rqeuests.
+                //
+                // * Memories mostly affect how big the virtual address space
+                //   reservation is for the pooling allocator. Memories require
+                //   ~4G of virtual address space meaning that we can run out
+                //   pretty quickly.
+                //
+                // * Tables are not as costly as memories in terms of virtual
+                //   memory and mostly just need to be in the same order of
+                //   magnitude to run that many components.
+                //
+                // * Core instances do not have a virtual memory reservation at
+                //   this time, it's just a counter to cap the maximum amount of
+                //   memory allocated (multiplied by `max_core_instance_size`
+                //   below) so the limit is more liberal.
+                //
+                // * Table elements limit the maximum size of any allocated
+                //   table, so it's set generously large. This does affect
+                //   virtual memory reservation but it's just 8 bytes per table
+                //   slot.
+                .total_component_instances(env("SPIN_WASMTIME_INSTANCE_COUNT", max_instances))
+                .total_memories(env("SPIN_WASMTIME_TOTAL_MEMORIES", max_instances))
+                .total_tables(env("SPIN_WASMTIME_TOTAL_TABLES", 2 * max_instances))
+                .total_stacks(env("SPIN_WASMTIME_TOTAL_STACKS", max_instances))
+                .total_core_instances(env("SPIN_WASMTIME_TOTAL_CORE_INSTANCES", 4 * max_instances))
+                .table_elements(env("SPIN_WASMTIME_INSTANCE_TABLE_ELEMENTS", 100_000))
                 // This number accounts for internal data structures that Wasmtime allocates for each instance.
                 // Instance allocation is proportional to the number of "things" in a wasm module like functions,
                 // globals, memories, etc. Instance allocations are relatively small and are largely inconsequential
@@ -100,15 +137,30 @@ impl Default for Config {
                 // of 10MB is arbitrarily chosen. It should be unlikely that any reasonably-sized module hits this limit.
                 .max_component_instance_size(env("SPIN_WASMTIME_INSTANCE_SIZE", 10 * MB) as usize)
                 .max_core_instance_size(env("SPIN_WASMTIME_CORE_INSTANCE_SIZE", 10 * MB) as usize)
+                // Configuration knobs for hard limits per-component for various
+                // items that require allocations. Note that these are
+                // per-component limits and instantiating a component still has
+                // to fit into the `total_*` limits above at runtime.
+                //
+                // * Core instances are more or less a reflection of how many
+                //   nested components can be in a component (e.g. via
+                //   composition)
+                // * The number of memories an instance can have effectively
+                //   limits the number of inner components a composed component
+                //   can have (since each inner component has its own memory).
+                //   We default to 32 for now, and we'll see how often this
+                //   limit gets reached.
+                // * Tables here are roughly similar to memories but are set a
+                //   bit higher as it's more likely to have more tables than
+                //   memories in a component.
                 .max_core_instances_per_component(env("SPIN_WASMTIME_CORE_INSTANCE_COUNT", 200))
-                .max_tables_per_component(env("SPIN_WASMTIME_INSTANCE_TABLES", 20))
-                .table_elements(env("SPIN_WASMTIME_INSTANCE_TABLE_ELEMENTS", 100_000))
-                // The number of memories an instance can have effectively limits the number of inner components
-                // a composed component can have (since each inner component has its own memory). We default to 32 for now, and
-                // we'll see how often this limit gets reached.
+                .max_tables_per_component(env("SPIN_WASMTIME_INSTANCE_TABLES", 64))
                 .max_memories_per_component(env("SPIN_WASMTIME_INSTANCE_MEMORIES", 32))
-                .total_memories(env("SPIN_WASMTIME_TOTAL_MEMORIES", 1_000))
-                .total_tables(env("SPIN_WASMTIME_TOTAL_TABLES", 2_000))
+                // Similar knobs as above, but as specified per-module instead
+                // of per-component. Note that these limits are much lower as
+                // core modules typically only have one of each.
+                .max_tables_per_module(env("SPIN_WASMTIME_MAX_TABLES_PER_MODULE", 2))
+                .max_memories_per_module(env("SPIN_WASMTIME_MAX_MEMORIES_PER_MODULE", 2))
                 // Nothing is lost from allowing the maximum size of memory for
                 // all instance as it's still limited through other the normal
                 // `StoreLimitsAsync` accounting method too.
