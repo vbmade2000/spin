@@ -1,4 +1,10 @@
-use std::{collections::HashMap, future::Future, io::IsTerminal, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    io::{ErrorKind, IsTerminal},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use anyhow::{bail, Context};
 use http::{
@@ -41,12 +47,16 @@ use crate::{
     Body, NotFoundRouteKind, TlsConfig, TriggerApp, TriggerInstanceBuilder,
 };
 
+pub const MAX_RETRIES: u16 = 10;
+
 /// An HTTP server which runs Spin apps.
 pub struct HttpServer<F: RuntimeFactors> {
     /// The address the server is listening on.
     listen_addr: SocketAddr,
     /// The TLS configuration for the server.
     tls_config: Option<TlsConfig>,
+    /// Whether to find a free port if the specified port is already in use.
+    find_free_port: bool,
     /// Request router.
     router: Router,
     /// The app being triggered.
@@ -62,6 +72,7 @@ impl<F: RuntimeFactors> HttpServer<F> {
     pub fn new(
         listen_addr: SocketAddr,
         tls_config: Option<TlsConfig>,
+        find_free_port: bool,
         trigger_app: TriggerApp<F>,
     ) -> anyhow::Result<Self> {
         // This needs to be a vec before building the router to handle duplicate routes
@@ -129,6 +140,7 @@ impl<F: RuntimeFactors> HttpServer<F> {
         Ok(Self {
             listen_addr,
             tls_config,
+            find_free_port,
             router,
             trigger_app,
             component_trigger_configs,
@@ -138,18 +150,55 @@ impl<F: RuntimeFactors> HttpServer<F> {
 
     /// Serve incoming requests over the provided [`TcpListener`].
     pub async fn serve(self: Arc<Self>) -> anyhow::Result<()> {
-        let listener = TcpListener::bind(self.listen_addr).await.with_context(|| {
-            format!(
-                "Unable to listen on {listen_addr}",
-                listen_addr = self.listen_addr
-            )
-        })?;
+        let listener: TcpListener = if self.find_free_port {
+            self.search_for_free_port().await?
+        } else {
+            TcpListener::bind(self.listen_addr).await.map_err(|err| {
+                if err.kind() == ErrorKind::AddrInUse {
+                    anyhow::anyhow!("{} is already in use. To have Spin search for a free port, use the --find-free-port option.", self.listen_addr)
+                } else {
+                    anyhow::anyhow!("Unable to listen on {}: {err:?}", self.listen_addr)
+                }
+            })?
+        };
+
         if let Some(tls_config) = self.tls_config.clone() {
             self.serve_https(listener, tls_config).await?;
         } else {
             self.serve_http(listener).await?;
         }
         Ok(())
+    }
+
+    async fn search_for_free_port(&self) -> anyhow::Result<TcpListener> {
+        let mut found_listener = None;
+        let mut addr = self.listen_addr;
+
+        for _ in 1..=MAX_RETRIES {
+            if addr.port() == u16::MAX {
+                anyhow::bail!(
+                    "Couldn't find a free port as we've reached the maximum port number. Consider retrying with a lower base port."
+                );
+            }
+
+            match TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    found_listener = Some(listener);
+                    break;
+                }
+                Err(err) if err.kind() == ErrorKind::AddrInUse => {
+                    addr.set_port(addr.port() + 1);
+                    continue;
+                }
+                Err(err) => anyhow::bail!("Unable to listen on {addr}: {err:?}",),
+            }
+        }
+
+        found_listener.ok_or_else(|| anyhow::anyhow!(
+            "Couldn't find a free port in the range {}-{}. Consider retrying with a different base port.",
+            self.listen_addr.port(),
+            self.listen_addr.port() + MAX_RETRIES
+        ))
     }
 
     async fn serve_http(self: Arc<Self>, listener: TcpListener) -> anyhow::Result<()> {
