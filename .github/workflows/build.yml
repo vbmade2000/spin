@@ -197,7 +197,9 @@ jobs:
       # Install all the toolchain dependencies
       - name: Install Rust wasm target
         run: rustup target add wasm32-wasip1 wasm32-unknown-unknown
-      - uses: goto-bus-stop/setup-zig@v2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.14.1'
       - uses: actions/setup-go@v4
         with:
           go-version: '1.23'
