@@ -8775,6 +8775,7 @@ dependencies = [
  "spin-manifest",
  "tar",
  "tempfile",
+ "terminal",
  "tokio",
  "toml",
  "toml_edit",

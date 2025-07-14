@@ -1,4 +1,6 @@
-use std::io::ErrorKind;
+use std::{io::ErrorKind, path::Path, process::Stdio};
+
+use anyhow::Context;
 
 // TODO: the following and the second half of plugins/git.rs are duplicates
 
@@ -45,4 +47,28 @@ impl UnderstandGitResult for Result<std::process::Output, std::io::Error> {
             },
         }
     }
+}
+
+pub(crate) async fn is_in_git_repo(dir: &Path) -> anyhow::Result<bool> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("-C")
+        .arg(dir)
+        .arg("rev-parse")
+        .arg("--git-dir")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let status = cmd
+        .status()
+        .await
+        .context("checking if new app is in a git repo")?;
+    Ok(status.success())
+}
+
+pub(crate) async fn init_git_repo(dir: &Path) -> Result<(), GitError> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("-C").arg(dir).arg("init");
+
+    let result = cmd.output().await;
+    result.understand_git_result().map(|_| ())
 }
