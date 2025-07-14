@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 
 use crate::{
     cancellable::Cancellable,
+    git,
     interaction::{InteractionStrategy, Interactive, Silent},
     renderer::MergeTarget,
     template::{ExtraOutputAction, TemplateVariantInfo},
@@ -73,6 +74,8 @@ impl Run {
             .await
             .and_then(|t| t.render())
             .and_then_async(|o| async move { o.write().await })
+            .await
+            .and_then_async(|_| self.maybe_initialise_git())
             .await
             .err()
     }
@@ -350,6 +353,32 @@ impl Run {
                 ))
             }
         }
+    }
+
+    async fn maybe_initialise_git(&self) -> anyhow::Result<()> {
+        if !matches!(self.options.variant, TemplateVariantInfo::NewApplication) {
+            return Ok(());
+        }
+
+        if self.options.no_vcs {
+            return Ok(());
+        }
+
+        let target_dir = self.generation_target_dir();
+
+        let skip_initing_repo = git::is_in_git_repo(&target_dir).await.unwrap_or(true);
+
+        if skip_initing_repo {
+            return Ok(());
+        }
+
+        if let Err(e) = git::init_git_repo(&target_dir).await {
+            if !matches!(e, git::GitError::ProgramNotFound) {
+                terminal::warn!("Spin was unable to initialise a Git repository. Run `git init` manually if you want one.");
+            }
+        }
+
+        Ok(())
     }
 
     fn list_content_files(from: &Path) -> anyhow::Result<Vec<PathBuf>> {

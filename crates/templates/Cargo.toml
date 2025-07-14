@@ -27,6 +27,7 @@ spin-common = { path = "../common" }
 spin-manifest = { path = "../manifest" }
 tar = { workspace = true }
 tempfile = { workspace = true }
+terminal = { path = "../terminal" }
 tokio = { workspace = true, features = ["fs", "process", "rt", "macros"] }
 toml = { workspace = true }
 toml_edit = { workspace = true }
