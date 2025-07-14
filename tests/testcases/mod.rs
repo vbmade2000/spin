@@ -148,8 +148,7 @@ fn preboot(
 /// Run a smoke test against a `spin new` http template
 pub fn http_smoke_test_template(
     template_name: &str,
-    template_url: Option<&str>,
-    template_branch: Option<&str>,
+    template_url: Option<TemplateSource>,
     plugins: &[&str],
     prebuild_hook: impl FnOnce(&mut TestEnvironment<()>) -> anyhow::Result<()>,
     build_env_vars: HashMap<String, String>,
@@ -158,7 +157,6 @@ pub fn http_smoke_test_template(
     http_smoke_test_template_with_route(
         template_name,
         template_url,
-        template_branch,
         plugins,
         prebuild_hook,
         build_env_vars,
@@ -172,8 +170,7 @@ pub fn http_smoke_test_template(
 #[allow(clippy::too_many_arguments)]
 pub fn http_smoke_test_template_with_route(
     template_name: &str,
-    template_url: Option<&str>,
-    template_branch: Option<&str>,
+    template_url: Option<TemplateSource>,
     plugins: &[&str],
     prebuild_hook: impl FnOnce(&mut TestEnvironment<()>) -> anyhow::Result<()>,
     build_env_vars: HashMap<String, String>,
@@ -183,7 +180,6 @@ pub fn http_smoke_test_template_with_route(
     let mut env = bootstrap_smoke_test(
         ServicesConfig::none(),
         template_url,
-        template_branch,
         plugins,
         template_name,
         |_| Ok(Vec::new()),
@@ -207,8 +203,7 @@ pub fn http_smoke_test_template_with_route(
 #[allow(dependency_on_unit_never_type_fallback)]
 pub fn redis_smoke_test_template(
     template_name: &str,
-    template_url: Option<&str>,
-    template_branch: Option<&str>,
+    template_url: Option<TemplateSource>,
     plugins: &[&str],
     new_app_args: impl FnOnce(u16) -> Vec<String>,
     prebuild_hook: impl FnOnce(&mut TestEnvironment<()>) -> anyhow::Result<()>,
@@ -217,7 +212,6 @@ pub fn redis_smoke_test_template(
     let mut env = bootstrap_smoke_test(
         test_environment::services::ServicesConfig::new(vec!["redis"])?,
         template_url,
-        template_branch,
         plugins,
         template_name,
         |env| {
@@ -254,13 +248,20 @@ pub fn redis_smoke_test_template(
 
 static TEMPLATE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+pub enum TemplateSource {
+    Url {
+        repo: &'static str,
+        branch: Option<&'static str>,
+    },
+    Local,
+}
+
 /// Bootstrap a test environment for a smoke test
 // TODO: refactor this function to not take so many arguments
 #[allow(clippy::too_many_arguments)]
 pub fn bootstrap_smoke_test(
     services: ServicesConfig,
-    template_url: Option<&str>,
-    template_branch: Option<&str>,
+    template_url: Option<TemplateSource>,
     plugins: &[&str],
     template_name: &str,
     new_app_args: impl FnOnce(&mut TestEnvironment<()>) -> anyhow::Result<Vec<String>>,
@@ -271,12 +272,25 @@ pub fn bootstrap_smoke_test(
 ) -> anyhow::Result<TestEnvironment<testing_framework::runtimes::spin_cli::SpinCli>> {
     let mut env: TestEnvironment<()> = TestEnvironment::boot(services)?;
 
-    let template_url = template_url.unwrap_or("https://github.com/spinframework/spin");
+    let this_dir = std::env::current_dir()?.display().to_string();
+
+    let template_source = template_url.unwrap_or(TemplateSource::Url {
+        repo: "https://github.com/spinframework/spin",
+        branch: None,
+    });
+    let install_loc_args = match template_source {
+        TemplateSource::Url { repo, branch: None } => &["--git", repo],
+        TemplateSource::Url {
+            repo,
+            branch: Some(br),
+        } => &["--git", repo, "--branch", br][..],
+        TemplateSource::Local => &["--dir", &this_dir],
+    };
+
     let mut template_install = std::process::Command::new(spin_binary());
-    template_install.args(["templates", "install", "--git", template_url, "--update"]);
-    if let Some(branch) = template_branch {
-        template_install.args(["--branch", branch]);
-    }
+    template_install.args(["templates", "install", "--update"]);
+    template_install.args(install_loc_args);
+
     // We need to serialize template installs since they can't be run in parallel
     {
         let _guard = TEMPLATE_MUTEX.lock().unwrap();
