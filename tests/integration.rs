@@ -459,12 +459,22 @@ mod integration_tests {
         http_smoke_test_template(
             "http-rust",
             None,
-            None,
             &[],
             |_| Ok(()),
             HashMap::default(),
             "Hello World!",
         )
+        .context("template on main")?;
+        http_smoke_test_template(
+            "http-rust",
+            Some(crate::testcases::TemplateSource::Local),
+            &[],
+            |_| Ok(()),
+            HashMap::default(),
+            "Hello World!",
+        )
+        .context("local template")?;
+        Ok(())
     }
 
     #[test]
@@ -603,8 +613,10 @@ mod integration_tests {
         ]);
         http_smoke_test_template(
             "http-py",
-            Some("https://github.com/spinframework/spin-python-sdk"),
-            Some("v2.0"),
+            Some(crate::testcases::TemplateSource::Url {
+                repo: "https://github.com/spinframework/spin-python-sdk",
+                branch: Some("v2.0"),
+            }),
             &[],
             prebuild,
             env_vars,
@@ -617,7 +629,6 @@ mod integration_tests {
     fn http_c_template_smoke_test() -> anyhow::Result<()> {
         http_smoke_test_template(
             "http-c",
-            None,
             None,
             &[],
             |_| Ok(()),
@@ -638,12 +649,22 @@ mod integration_tests {
         http_smoke_test_template(
             "http-go",
             None,
-            None,
             &[],
             prebuild,
             HashMap::default(),
             "Hello World!\n",
         )
+        .context("template on main")?;
+        http_smoke_test_template(
+            "http-go",
+            Some(crate::testcases::TemplateSource::Local),
+            &[],
+            prebuild,
+            HashMap::default(),
+            "Hello World!\n",
+        )
+        .context("local template")?;
+        Ok(())
     }
 
     #[test]
@@ -657,8 +678,10 @@ mod integration_tests {
         };
         http_smoke_test_template(
             "http-js",
-            Some("https://github.com/spinframework/spin-js-sdk"),
-            None,
+            Some(crate::testcases::TemplateSource::Url {
+                repo: "https://github.com/spinframework/spin-js-sdk",
+                branch: None,
+            }),
             &[],
             prebuild,
             HashMap::default(),
@@ -677,8 +700,10 @@ mod integration_tests {
         };
         http_smoke_test_template(
             "http-ts",
-            Some("https://github.com/spinframework/spin-js-sdk"),
-            None,
+            Some(crate::testcases::TemplateSource::Url {
+                repo: "https://github.com/spinframework/spin-js-sdk",
+                branch: None,
+            }),
             &[],
             prebuild,
             HashMap::default(),
@@ -693,7 +718,6 @@ mod integration_tests {
         http_smoke_test_template(
             "http-grain",
             None,
-            None,
             &[],
             |_| Ok(()),
             HashMap::default(),
@@ -706,7 +730,6 @@ mod integration_tests {
     fn http_zig_template_smoke_test() -> anyhow::Result<()> {
         http_smoke_test_template(
             "http-zig",
-            None,
             None,
             &[],
             |_| Ok(()),
@@ -721,7 +744,6 @@ mod integration_tests {
         super::testcases::http_smoke_test_template_with_route(
             "http-php",
             None,
-            None,
             &[],
             |_| Ok(()),
             HashMap::default(),
@@ -735,7 +757,6 @@ mod integration_tests {
     fn redis_go_template_smoke_test() -> anyhow::Result<()> {
         super::testcases::redis_smoke_test_template(
             "redis-go",
-            None,
             None,
             &[],
             |port| {
@@ -753,6 +774,28 @@ mod integration_tests {
                 Ok(())
             },
         )
+        .context("template on main")?;
+        super::testcases::redis_smoke_test_template(
+            "redis-go",
+            Some(crate::testcases::TemplateSource::Local),
+            &[],
+            |port| {
+                vec![
+                    "--value".into(),
+                    "redis-channel=redis-channel".into(),
+                    "--value".into(),
+                    format!("redis-address=redis://localhost:{port}"),
+                ]
+            },
+            |env| {
+                let mut tidy = std::process::Command::new("go");
+                tidy.args(["mod", "tidy"]);
+                env.run_in(&mut tidy)?;
+                Ok(())
+            },
+        )
+        .context("local template")?;
+        Ok(())
     }
 
     #[test]
@@ -760,7 +803,6 @@ mod integration_tests {
     fn redis_rust_template_smoke_test() -> anyhow::Result<()> {
         super::testcases::redis_smoke_test_template(
             "redis-rust",
-            None,
             None,
             &[],
             |port| {
@@ -773,6 +815,23 @@ mod integration_tests {
             },
             |_| Ok(()),
         )
+        .context("template on main")?;
+        super::testcases::redis_smoke_test_template(
+            "redis-rust",
+            Some(crate::testcases::TemplateSource::Local),
+            &[],
+            |port| {
+                vec![
+                    "--value".into(),
+                    "redis-channel=redis-channel".into(),
+                    "--value".into(),
+                    format!("redis-address=redis://localhost:{port}"),
+                ]
+            },
+            |_| Ok(()),
+        )
+        .context("local template")?;
+        Ok(())
     }
 
     #[test]
@@ -796,7 +855,6 @@ mod integration_tests {
         };
         let mut env = super::testcases::bootstrap_smoke_test(
             services,
-            None,
             None,
             &[],
             "http-rust",
