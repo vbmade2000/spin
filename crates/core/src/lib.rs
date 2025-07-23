@@ -104,7 +104,7 @@ impl Default for Config {
                 // * Component instances are the maximum live number of
                 //   component instances or instantiations. In other words this
                 //   is the maximal concurrency that Spin can serve in terms of
-                //   HTTP rqeuests.
+                //   HTTP requests.
                 //
                 // * Memories mostly affect how big the virtual address space
                 //   reservation is for the pooling allocator. Memories require
