@@ -12,6 +12,9 @@ use spin_factors::RuntimeFactors;
 use spin_factors_executor::ExecutorHooks;
 use tokio::io::AsyncWrite;
 
+pub const STDOUT_LOG_FILE_SUFFIX: &str = "stdout";
+pub const STDERR_LOG_FILE_SUFFIX: &str = "stderr";
+
 /// Which components should have their logs followed on stdout/stderr.
 #[derive(Clone, Debug, Default)]
 pub enum FollowComponents {
@@ -39,13 +42,19 @@ impl FollowComponents {
 pub struct StdioLoggingExecutorHooks {
     follow_components: FollowComponents,
     log_dir: Option<PathBuf>,
+    truncate_log: bool,
 }
 
 impl StdioLoggingExecutorHooks {
-    pub fn new(follow_components: FollowComponents, log_dir: Option<PathBuf>) -> Self {
+    pub fn new(
+        follow_components: FollowComponents,
+        log_dir: Option<PathBuf>,
+        truncate_log: bool,
+    ) -> Self {
         Self {
             follow_components,
             log_dir,
+            truncate_log,
         }
     }
 
@@ -86,6 +95,23 @@ impl StdioLoggingExecutorHooks {
             _ => Ok(()),
         }
     }
+
+    fn truncate_log_files(log_dir: &Path) {
+        if let Ok(entries) = log_dir.read_dir() {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+
+                if name.ends_with(&format!("{STDOUT_LOG_FILE_SUFFIX}.txt"))
+                    || name.ends_with(&format!("{STDERR_LOG_FILE_SUFFIX}.txt"))
+                {
+                    _ = std::fs::File::create(path)
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -95,10 +121,15 @@ impl<F: RuntimeFactors, U> ExecutorHooks<F, U> for StdioLoggingExecutorHooks {
         configured_app: &spin_factors::ConfiguredApp<F>,
     ) -> anyhow::Result<()> {
         self.validate_follows(configured_app.app())?;
+
         if let Some(dir) = &self.log_dir {
             // Ensure log dir exists if set
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("Failed to create log dir {}", quoted_path(dir)))?;
+
+            if self.truncate_log {
+                Self::truncate_log_files(dir);
+            }
 
             println!("Logging component stdio to {}", quoted_path(dir.join("")))
         }
@@ -115,12 +146,12 @@ impl<F: RuntimeFactors, U> ExecutorHooks<F, U> for StdioLoggingExecutorHooks {
         };
         wasi_builder.stdout_pipe(self.component_stdio_writer(
             &component_id,
-            "stdout",
+            STDOUT_LOG_FILE_SUFFIX,
             self.log_dir.as_deref(),
         )?);
         wasi_builder.stderr_pipe(self.component_stdio_writer(
             &component_id,
-            "stderr",
+            STDERR_LOG_FILE_SUFFIX,
             self.log_dir.as_deref(),
         )?);
         Ok(())
