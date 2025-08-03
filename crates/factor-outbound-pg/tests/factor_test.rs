@@ -105,16 +105,14 @@ async fn exercise_query() -> anyhow::Result<()> {
 }
 
 // TODO: We can expand this mock to track calls and simulate return values
+#[derive(Default)]
 pub struct MockClientFactory {}
 pub struct MockClient {}
 
 #[async_trait]
 impl ClientFactory for MockClientFactory {
     type Client = MockClient;
-    fn new() -> Self {
-        Self {}
-    }
-    async fn build_client(&mut self, _address: &str) -> Result<Self::Client> {
+    async fn get_client(&self, _address: &str) -> Result<Self::Client> {
         Ok(MockClient {})
     }
 }

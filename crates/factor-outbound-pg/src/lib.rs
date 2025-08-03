@@ -11,15 +11,14 @@ use spin_factors::{
     anyhow, ConfigureAppContext, Factor, FactorData, PrepareContext, RuntimeFactors,
     SelfInstanceBuilder,
 };
-use tokio::sync::RwLock;
 
 pub struct OutboundPgFactor<CF = crate::client::PooledTokioClientFactory> {
     _phantom: std::marker::PhantomData<CF>,
 }
 
-impl<CF: ClientFactory + Send + Sync + 'static> Factor for OutboundPgFactor<CF> {
+impl<CF: ClientFactory> Factor for OutboundPgFactor<CF> {
     type RuntimeConfig = ();
-    type AppState = Arc<RwLock<CF>>;
+    type AppState = Arc<CF>;
     type InstanceBuilder = InstanceState<CF>;
 
     fn init(&mut self, ctx: &mut impl spin_factors::InitContext<Self>) -> anyhow::Result<()> {
@@ -35,7 +34,7 @@ impl<CF: ClientFactory + Send + Sync + 'static> Factor for OutboundPgFactor<CF> 
         &self,
         _ctx: ConfigureAppContext<T, Self>,
     ) -> anyhow::Result<Self::AppState> {
-        Ok(Arc::new(RwLock::new(CF::new())))
+        Ok(Arc::new(CF::default()))
     }
 
     fn prepare<T: RuntimeFactors>(
@@ -69,8 +68,8 @@ impl<C> OutboundPgFactor<C> {
 
 pub struct InstanceState<CF: ClientFactory> {
     allowed_hosts: OutboundAllowedHosts,
-    client_factory: Arc<RwLock<CF>>,
+    client_factory: Arc<CF>,
     connections: spin_resource_table::Table<CF::Client>,
 }
 
-impl<CF: ClientFactory + Send + 'static> SelfInstanceBuilder for InstanceState<CF> {}
+impl<CF: ClientFactory> SelfInstanceBuilder for InstanceState<CF> {}

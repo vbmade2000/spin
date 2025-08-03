@@ -8,44 +8,50 @@ use spin_world::spin::postgres::postgres::{
 use tokio_postgres::types::Type;
 use tokio_postgres::{config::SslMode, types::ToSql, NoTls, Row};
 
+/// Max connections in a given address' connection pool
 const CONNECTION_POOL_SIZE: usize = 64;
+/// Max addresses for which to keep pools in cache.
+const CONNECTION_POOL_CACHE_CAPACITY: u64 = 16;
 
+/// A factory object for Postgres clients. This abstracts
+/// details of client creation such as pooling.
 #[async_trait]
-pub trait ClientFactory: Send + Sync {
-    type Client: Client + Send + Sync + 'static;
-    fn new() -> Self;
-    async fn build_client(&mut self, address: &str) -> Result<Self::Client>;
+pub trait ClientFactory: Default + Send + Sync + 'static {
+    /// The type of client produced by `get_client`.
+    type Client: Client;
+    /// Gets a client from the factory.
+    async fn get_client(&self, address: &str) -> Result<Self::Client>;
 }
 
+/// A `ClientFactory` that uses a connection pool per address.
 pub struct PooledTokioClientFactory {
-    pools: std::collections::HashMap<String, deadpool_postgres::Pool>,
+    pools: moka::sync::Cache<String, deadpool_postgres::Pool>,
+}
+
+impl Default for PooledTokioClientFactory {
+    fn default() -> Self {
+        Self {
+            pools: moka::sync::Cache::new(CONNECTION_POOL_CACHE_CAPACITY),
+        }
+    }
 }
 
 #[async_trait]
 impl ClientFactory for PooledTokioClientFactory {
     type Client = deadpool_postgres::Object;
 
-    fn new() -> Self {
-        Self {
-            pools: Default::default(),
-        }
-    }
-
-    async fn build_client(&mut self, address: &str) -> Result<Self::Client> {
-        let pool_entry = self.pools.entry(address.to_owned());
-        let pool = match pool_entry {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let pool = create_connection_pool(address)
-                    .context("establishing PostgreSQL connection pool")?;
-                entry.insert(pool)
-            }
-        };
+    async fn get_client(&self, address: &str) -> Result<Self::Client> {
+        let pool = self
+            .pools
+            .try_get_with_by_ref(address, || create_connection_pool(address))
+            .map_err(ArcError)
+            .context("establishing PostgreSQL connection pool")?;
 
         Ok(pool.get().await?)
     }
 }
 
+/// Creates a Postgres connection pool for the given address.
 fn create_connection_pool(address: &str) -> Result<deadpool_postgres::Pool> {
     let config = address
         .parse::<tokio_postgres::Config>()
@@ -53,8 +59,6 @@ fn create_connection_pool(address: &str) -> Result<deadpool_postgres::Pool> {
 
     tracing::debug!("Build new connection: {}", address);
 
-    // TODO: This is slower but safer. Is it the right tradeoff?
-    // https://docs.rs/deadpool-postgres/latest/deadpool_postgres/enum.RecyclingMethod.html
     let mgr_config = deadpool_postgres::ManagerConfig {
         recycling_method: deadpool_postgres::RecyclingMethod::Clean,
     };
@@ -67,7 +71,7 @@ fn create_connection_pool(address: &str) -> Result<deadpool_postgres::Pool> {
         deadpool_postgres::Manager::from_config(config, connector, mgr_config)
     };
 
-    // TODO: what is our max size heuristic?  Should this be passed in soe that different
+    // TODO: what is our max size heuristic?  Should this be passed in so that different
     // hosts can manage it according to their needs?  Will a plain number suffice for
     // sophisticated hosts anyway?
     let pool = deadpool_postgres::Pool::builder(mgr)
@@ -79,7 +83,7 @@ fn create_connection_pool(address: &str) -> Result<deadpool_postgres::Pool> {
 }
 
 #[async_trait]
-pub trait Client {
+pub trait Client: Send + Sync + 'static {
     async fn execute(
         &self,
         statement: String,
@@ -406,5 +410,27 @@ impl ToSql for PgNull {
 impl std::fmt::Debug for PgNull {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NULL").finish()
+    }
+}
+
+/// Workaround for moka returning Arc<Error> which, although
+/// necessary for concurrency, does not play well with others.
+struct ArcError(std::sync::Arc<anyhow::Error>);
+
+impl std::error::Error for ArcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+impl std::fmt::Debug for ArcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for ArcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }

@@ -8,6 +8,7 @@ edition = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
+moka = { version = "0.12", features = ["sync"] }
 native-tls = "0.2"
 postgres-native-tls = "0.5"
 spin-core = { path = "../core" }
