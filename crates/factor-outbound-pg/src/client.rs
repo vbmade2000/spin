@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
 use spin_world::async_trait;
@@ -6,15 +6,84 @@ use spin_world::spin::postgres::postgres::{
     self as v3, Column, DbDataType, DbValue, ParameterValue, RowSet,
 };
 use tokio_postgres::types::Type;
-use tokio_postgres::{config::SslMode, types::ToSql, Row};
-use tokio_postgres::{Client as TokioClient, NoTls, Socket};
+use tokio_postgres::{config::SslMode, types::ToSql, NoTls, Row};
+
+/// Max connections in a given address' connection pool
+const CONNECTION_POOL_SIZE: usize = 64;
+/// Max addresses for which to keep pools in cache.
+const CONNECTION_POOL_CACHE_CAPACITY: u64 = 16;
+
+/// A factory object for Postgres clients. This abstracts
+/// details of client creation such as pooling.
+#[async_trait]
+pub trait ClientFactory: Default + Send + Sync + 'static {
+    /// The type of client produced by `get_client`.
+    type Client: Client;
+    /// Gets a client from the factory.
+    async fn get_client(&self, address: &str) -> Result<Self::Client>;
+}
+
+/// A `ClientFactory` that uses a connection pool per address.
+pub struct PooledTokioClientFactory {
+    pools: moka::sync::Cache<String, deadpool_postgres::Pool>,
+}
+
+impl Default for PooledTokioClientFactory {
+    fn default() -> Self {
+        Self {
+            pools: moka::sync::Cache::new(CONNECTION_POOL_CACHE_CAPACITY),
+        }
+    }
+}
 
 #[async_trait]
-pub trait Client {
-    async fn build_client(address: &str) -> Result<Self>
-    where
-        Self: Sized;
+impl ClientFactory for PooledTokioClientFactory {
+    type Client = deadpool_postgres::Object;
 
+    async fn get_client(&self, address: &str) -> Result<Self::Client> {
+        let pool = self
+            .pools
+            .try_get_with_by_ref(address, || create_connection_pool(address))
+            .map_err(ArcError)
+            .context("establishing PostgreSQL connection pool")?;
+
+        Ok(pool.get().await?)
+    }
+}
+
+/// Creates a Postgres connection pool for the given address.
+fn create_connection_pool(address: &str) -> Result<deadpool_postgres::Pool> {
+    let config = address
+        .parse::<tokio_postgres::Config>()
+        .context("parsing Postgres connection string")?;
+
+    tracing::debug!("Build new connection: {}", address);
+
+    let mgr_config = deadpool_postgres::ManagerConfig {
+        recycling_method: deadpool_postgres::RecyclingMethod::Clean,
+    };
+
+    let mgr = if config.get_ssl_mode() == SslMode::Disable {
+        deadpool_postgres::Manager::from_config(config, NoTls, mgr_config)
+    } else {
+        let builder = TlsConnector::builder();
+        let connector = MakeTlsConnector::new(builder.build()?);
+        deadpool_postgres::Manager::from_config(config, connector, mgr_config)
+    };
+
+    // TODO: what is our max size heuristic?  Should this be passed in so that different
+    // hosts can manage it according to their needs?  Will a plain number suffice for
+    // sophisticated hosts anyway?
+    let pool = deadpool_postgres::Pool::builder(mgr)
+        .max_size(CONNECTION_POOL_SIZE)
+        .build()
+        .context("building Postgres connection pool")?;
+
+    Ok(pool)
+}
+
+#[async_trait]
+pub trait Client: Send + Sync + 'static {
     async fn execute(
         &self,
         statement: String,
@@ -29,28 +98,7 @@ pub trait Client {
 }
 
 #[async_trait]
-impl Client for TokioClient {
-    async fn build_client(address: &str) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        let config = address.parse::<tokio_postgres::Config>()?;
-
-        tracing::debug!("Build new connection: {}", address);
-
-        if config.get_ssl_mode() == SslMode::Disable {
-            let (client, connection) = config.connect(NoTls).await?;
-            spawn_connection(connection);
-            Ok(client)
-        } else {
-            let builder = TlsConnector::builder();
-            let connector = MakeTlsConnector::new(builder.build()?);
-            let (client, connection) = config.connect(connector).await?;
-            spawn_connection(connection);
-            Ok(client)
-        }
-    }
-
+impl Client for deadpool_postgres::Object {
     async fn execute(
         &self,
         statement: String,
@@ -67,7 +115,8 @@ impl Client for TokioClient {
             .map(|b| b.as_ref() as &(dyn ToSql + Sync))
             .collect();
 
-        self.execute(&statement, params_refs.as_slice())
+        self.as_ref()
+            .execute(&statement, params_refs.as_slice())
             .await
             .map_err(|e| v3::Error::QueryFailed(format!("{e:?}")))
     }
@@ -89,6 +138,7 @@ impl Client for TokioClient {
             .collect();
 
         let results = self
+            .as_ref()
             .query(&statement, params_refs.as_slice())
             .await
             .map_err(|e| v3::Error::QueryFailed(format!("{e:?}")))?;
@@ -109,17 +159,6 @@ impl Client for TokioClient {
 
         Ok(RowSet { columns, rows })
     }
-}
-
-fn spawn_connection<T>(connection: tokio_postgres::Connection<Socket, T>)
-where
-    T: tokio_postgres::tls::TlsStream + std::marker::Unpin + std::marker::Send + 'static,
-{
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            tracing::error!("Postgres connection error: {}", e);
-        }
-    });
 }
 
 fn to_sql_parameter(value: &ParameterValue) -> Result<Box<dyn ToSql + Send + Sync>> {
@@ -371,5 +410,27 @@ impl ToSql for PgNull {
 impl std::fmt::Debug for PgNull {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NULL").finish()
+    }
+}
+
+/// Workaround for moka returning Arc<Error> which, although
+/// necessary for concurrency, does not play well with others.
+struct ArcError(std::sync::Arc<anyhow::Error>);
+
+impl std::error::Error for ArcError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+impl std::fmt::Debug for ArcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for ArcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }

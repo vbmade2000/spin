@@ -1,7 +1,9 @@
 pub mod client;
 mod host;
 
-use client::Client;
+use std::sync::Arc;
+
+use client::ClientFactory;
 use spin_factor_outbound_networking::{
     config::allowed_hosts::OutboundAllowedHosts, OutboundNetworkingFactor,
 };
@@ -9,16 +11,15 @@ use spin_factors::{
     anyhow, ConfigureAppContext, Factor, FactorData, PrepareContext, RuntimeFactors,
     SelfInstanceBuilder,
 };
-use tokio_postgres::Client as PgClient;
 
-pub struct OutboundPgFactor<C = PgClient> {
-    _phantom: std::marker::PhantomData<C>,
+pub struct OutboundPgFactor<CF = crate::client::PooledTokioClientFactory> {
+    _phantom: std::marker::PhantomData<CF>,
 }
 
-impl<C: Send + Sync + Client + 'static> Factor for OutboundPgFactor<C> {
+impl<CF: ClientFactory> Factor for OutboundPgFactor<CF> {
     type RuntimeConfig = ();
-    type AppState = ();
-    type InstanceBuilder = InstanceState<C>;
+    type AppState = Arc<CF>;
+    type InstanceBuilder = InstanceState<CF>;
 
     fn init(&mut self, ctx: &mut impl spin_factors::InitContext<Self>) -> anyhow::Result<()> {
         ctx.link_bindings(spin_world::v1::postgres::add_to_linker::<_, FactorData<Self>>)?;
@@ -33,7 +34,7 @@ impl<C: Send + Sync + Client + 'static> Factor for OutboundPgFactor<C> {
         &self,
         _ctx: ConfigureAppContext<T, Self>,
     ) -> anyhow::Result<Self::AppState> {
-        Ok(())
+        Ok(Arc::new(CF::default()))
     }
 
     fn prepare<T: RuntimeFactors>(
@@ -45,6 +46,7 @@ impl<C: Send + Sync + Client + 'static> Factor for OutboundPgFactor<C> {
             .allowed_hosts();
         Ok(InstanceState {
             allowed_hosts,
+            client_factory: ctx.app_state().clone(),
             connections: Default::default(),
         })
     }
@@ -64,9 +66,10 @@ impl<C> OutboundPgFactor<C> {
     }
 }
 
-pub struct InstanceState<C> {
+pub struct InstanceState<CF: ClientFactory> {
     allowed_hosts: OutboundAllowedHosts,
-    connections: spin_resource_table::Table<C>,
+    client_factory: Arc<CF>,
+    connections: spin_resource_table::Table<CF::Client>,
 }
 
-impl<C: Send + 'static> SelfInstanceBuilder for InstanceState<C> {}
+impl<CF: ClientFactory> SelfInstanceBuilder for InstanceState<CF> {}
