@@ -1,0 +1,8 @@
+Failed to load Spin app from "<test-dir>/invalid-variable-default-in-allowed-hosts.toml"
+
+Caused by:
+    0: Failed to load component `test`
+    1: `allowed_outbound_hosts` is malformed
+    2: using default variable value(s) with template "https://{{ invalid_default_host }}" results in invalid config "https://invalid host"
+    3: Invalid allowed host "invalid host"
+    4: invalid international domain name
