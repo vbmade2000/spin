@@ -100,7 +100,7 @@ impl<F: Fn(&str, &str) + Send + Sync> DisallowedHostHandler for F {
     }
 }
 
-/// An address is a url-like string that contains a host, a port, and an optional scheme
+/// Represents a single `allowed_outbound_hosts` item.
 #[derive(Eq, Debug, Clone)]
 pub struct AllowedHostConfig {
     original: String,
@@ -110,10 +110,7 @@ pub struct AllowedHostConfig {
 }
 
 impl AllowedHostConfig {
-    /// Try to parse the address.
-    ///
-    /// If the parsing fails, the address is prepended with the scheme and parsing
-    /// is tried again.
+    /// Parses the given string as an `allowed_hosts_config` item.
     pub fn parse(url: impl Into<String>) -> anyhow::Result<Self> {
         let original = url.into();
         let url = original.trim();
@@ -154,12 +151,15 @@ impl AllowedHostConfig {
         &self.port
     }
 
+    /// Returns true if the given URL is allowed.
     fn allows(&self, url: &OutboundUrl) -> bool {
         self.scheme.allows(&url.scheme)
             && self.host.allows(&url.host)
             && self.port.allows(url.port, &url.scheme)
     }
 
+    /// Returns true if relative ("self") requests to any of the given schemes
+    /// are allowed.
     fn allows_relative(&self, schemes: &[&str]) -> bool {
         schemes.iter().any(|s| self.scheme.allows(s)) && self.host.allows_relative()
     }
@@ -177,34 +177,39 @@ impl std::fmt::Display for AllowedHostConfig {
     }
 }
 
+/// Represents the scheme part of an allowed_outbound_hosts item.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum SchemeConfig {
+    /// Any scheme is allowed: `*://`
     Any,
+    /// Any scheme is allowed: `*://`
     List(Vec<String>),
 }
 
 impl SchemeConfig {
+    /// Parses the scheme part of an allowed_outbound_hosts item.
     fn parse(scheme: &str) -> anyhow::Result<Self> {
         if scheme == "*" {
             return Ok(Self::Any);
         }
 
         if scheme.starts_with('{') {
-            // TODO:
-            bail!("scheme lists are not yet supported")
+            anyhow::bail!("scheme lists are not supported")
         }
 
         if scheme.chars().any(|c| !c.is_alphabetic()) {
-            anyhow::bail!(" scheme {scheme:?} contains non alphabetic character");
+            anyhow::bail!("scheme {scheme:?} contains non alphabetic character");
         }
 
         Ok(Self::List(vec![scheme.into()]))
     }
 
+    /// Returns true if any scheme is allowed (i.e. `*://`).
     pub fn allows_any(&self) -> bool {
         matches!(self, Self::Any)
     }
 
+    /// Returns true if the given scheme is allowed.
     fn allows(&self, scheme: &str) -> bool {
         match self {
             SchemeConfig::Any => true,
@@ -213,6 +218,7 @@ impl SchemeConfig {
     }
 }
 
+/// Represents the host part of an allowed_outbound_hosts item.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum HostConfig {
     Any,
@@ -223,6 +229,7 @@ pub enum HostConfig {
 }
 
 impl HostConfig {
+    /// Parses the host part of an allowed_outbound_hosts item.
     fn parse(mut host: &str) -> anyhow::Result<Self> {
         host = host.trim();
         if host == "*" {
@@ -263,6 +270,7 @@ impl HostConfig {
         Ok(Self::List(vec![host.into()]))
     }
 
+    /// Returns true if the given host is allowed.
     fn allows(&self, host: &str) -> bool {
         match self {
             HostConfig::Any => true,
@@ -278,11 +286,13 @@ impl HostConfig {
         }
     }
 
+    /// Returns true if relative ("self") requests are allowed.
     fn allows_relative(&self) -> bool {
         matches!(self, Self::Any | Self::ToSelf)
     }
 }
 
+/// Represents the port part of an allowed_outbound_hosts item.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PortConfig {
     Any,
@@ -290,6 +300,7 @@ pub enum PortConfig {
 }
 
 impl PortConfig {
+    /// Parses the port part of an allowed_outbound_hosts item.
     fn parse(port: &str, scheme: &str) -> anyhow::Result<PortConfig> {
         if port.is_empty() {
             return well_known_port(scheme)
@@ -310,6 +321,7 @@ impl PortConfig {
         Ok(Self::List(vec![port]))
     }
 
+    /// Returns true if the given port (or scheme-default port) is allowed.
     fn allows(&self, port: Option<u16>, scheme: &str) -> bool {
         match self {
             PortConfig::Any => true,
@@ -324,6 +336,7 @@ impl PortConfig {
     }
 }
 
+/// Represents a single port specifier in an allowed_outbound_hosts item.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum IndividualPortConfig {
     Port(u16),
@@ -331,6 +344,7 @@ pub enum IndividualPortConfig {
 }
 
 impl IndividualPortConfig {
+    /// Parses the a single port specifier in an allowed_outbound_hosts item.
     fn parse(port: &str) -> anyhow::Result<Self> {
         if let Some((start, end)) = port.split_once("..") {
             let start = start
@@ -346,6 +360,7 @@ impl IndividualPortConfig {
         })?))
     }
 
+    /// Returns true if the given port is allowed.
     fn allows(&self, port: u16) -> bool {
         match self {
             IndividualPortConfig::Port(p) => p == &port,
@@ -354,6 +369,7 @@ impl IndividualPortConfig {
     }
 }
 
+/// Returns a well-known default port for the given URL scheme.
 fn well_known_port(scheme: &str) -> Option<u16> {
     match scheme {
         "postgres" => Some(5432),
@@ -366,12 +382,15 @@ fn well_known_port(scheme: &str) -> Option<u16> {
     }
 }
 
+/// Holds a single allowed_outbound_hosts item, either parsed or as an
+/// unresolved template.
 enum PartialAllowedHostConfig {
     Exact(AllowedHostConfig),
     Unresolved(spin_expressions::Template),
 }
 
 impl PartialAllowedHostConfig {
+    /// Returns this config, resolving any template with the given resolver.
     fn resolve(
         self,
         resolver: &spin_expressions::PreparedResolver,
@@ -383,6 +402,7 @@ impl PartialAllowedHostConfig {
     }
 }
 
+/// Represents an allowed_outbound_hosts config.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum AllowedHostsConfig {
     All,
@@ -390,6 +410,8 @@ pub enum AllowedHostsConfig {
 }
 
 impl AllowedHostsConfig {
+    /// Parses the given allowed_outbound_hosts values, resolving any templates
+    /// with the given resolver.
     pub fn parse<S: AsRef<str>>(
         hosts: &[S],
         resolver: &spin_expressions::PreparedResolver,
@@ -402,13 +424,15 @@ impl AllowedHostsConfig {
         Ok(Self::SpecificHosts(allowed))
     }
 
+    /// Validate the given allowed_outbound_hosts values. Templated values are
+    /// only validated against template syntax.
     pub fn validate<S: AsRef<str>>(hosts: &[S]) -> anyhow::Result<()> {
         _ = Self::parse_partial(hosts)?;
         Ok(())
     }
 
-    // Parses literals but defers templates. This is pulled out so that `validate`
-    // doesn't have to deal with resolving templates.
+    /// Parse the given allowed_outbound_hosts values with deferred parsing of
+    /// templated values.
     fn parse_partial<S: AsRef<str>>(hosts: &[S]) -> anyhow::Result<Vec<PartialAllowedHostConfig>> {
         if hosts.len() == 1 && hosts[0].as_ref() == "insecure:allow-all" {
             bail!("'insecure:allow-all' is not allowed - use '*://*:*' instead if you really want to allow all outbound traffic'")
@@ -427,7 +451,7 @@ impl AllowedHostsConfig {
         Ok(allowed)
     }
 
-    /// Determine if the supplied url is allowed
+    /// Returns true if the given url is allowed.
     pub fn allows(&self, url: &OutboundUrl) -> bool {
         match self {
             AllowedHostsConfig::All => true,
@@ -435,6 +459,8 @@ impl AllowedHostsConfig {
         }
     }
 
+    /// Returns true if relative ("self") requests to any of the given schemes
+    /// are allowed.
     pub fn allows_relative_url(&self, schemes: &[&str]) -> bool {
         match self {
             AllowedHostsConfig::All => true,
@@ -461,7 +487,7 @@ pub struct OutboundUrl {
 }
 
 impl OutboundUrl {
-    /// Parse a URL.
+    /// Parses a URL.
     ///
     /// If parsing `url` fails, `{scheme}://` is prepended to `url` and parsing is tried again.
     pub fn parse(url: impl Into<String>, scheme: &str) -> anyhow::Result<Self> {
