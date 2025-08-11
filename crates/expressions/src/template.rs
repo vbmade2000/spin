@@ -55,7 +55,8 @@ impl Display for Template {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.parts().try_for_each(|part| match part {
             Part::Lit(lit) => f.write_str(lit),
-            Part::Expr(expr) => write!(f, "{{ {expr} }}"),
+            // Rust format strings escape "{" with "{{"", so "{{" becomes "{{{{"
+            Part::Expr(expr) => write!(f, "{{{{ {expr} }}}}"),
         })
     }
 }
