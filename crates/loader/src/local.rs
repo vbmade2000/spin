@@ -12,9 +12,7 @@ use spin_locked_app::{
     values::{ValuesMap, ValuesMapBuilder},
 };
 use spin_manifest::schema::v2::{self, AppManifest, KebabId, WasiFilesMount};
-use spin_outbound_networking_config::allowed_hosts::{
-    AllowedHostsConfig, SERVICE_CHAINING_DOMAIN_SUFFIX,
-};
+use spin_outbound_networking_config::allowed_hosts::{AllowedHostConfig, AllowedHostsConfig};
 use spin_serde::DependencyName;
 use std::collections::BTreeMap;
 use tokio::{io::AsyncWriteExt, sync::Semaphore};
@@ -841,19 +839,7 @@ fn requires_service_chaining(component: &spin_manifest::schema::v2::Component) -
 }
 
 fn is_chaining_host(pattern: &str) -> bool {
-    use spin_outbound_networking_config::allowed_hosts::{AllowedHostConfig, HostConfig};
-
-    let Ok(allowed) = AllowedHostConfig::parse(pattern) else {
-        return false;
-    };
-
-    match allowed.host() {
-        HostConfig::List(hosts) => hosts
-            .iter()
-            .any(|h| h.ends_with(SERVICE_CHAINING_DOMAIN_SUFFIX)),
-        HostConfig::AnySubdomain(domain) => domain == SERVICE_CHAINING_DOMAIN_SUFFIX,
-        _ => false,
-    }
+    AllowedHostConfig::parse(pattern).is_ok_and(|config| config.is_for_service_chaining())
 }
 
 const SLOTH_WARNING_DELAY_MILLIS: u64 = 1250;
