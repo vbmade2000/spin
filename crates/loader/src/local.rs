@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use futures::{future::try_join_all, StreamExt};
 use reqwest::Url;
 use spin_common::{paths::parent_dir, sloth, ui::quoted_path};
+use spin_expressions::Resolver;
 use spin_locked_app::{
     locked::{
         self, ContentPath, ContentRef, LockedApp, LockedComponent, LockedComponentDependency,
@@ -87,7 +88,8 @@ impl LocalLoader {
         let variables = variables
             .into_iter()
             .map(|(name, v)| Ok((name.to_string(), locked_variable(v)?)))
-            .collect::<Result<_>>()?;
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let resolver = Resolver::new(variables.clone())?;
 
         let triggers = triggers
             .into_iter()
@@ -102,10 +104,13 @@ impl LocalLoader {
         let sloth_guard = warn_if_component_load_slothful();
 
         // Load all components concurrently
-        let components = try_join_all(components.into_iter().map(|(id, c)| async move {
-            self.load_component(&id, c)
-                .await
-                .with_context(|| format!("Failed to load component `{id}`"))
+        let components = try_join_all(components.into_iter().map(|(id, c)| {
+            let resolver = &resolver;
+            async move {
+                self.load_component(&id, c, resolver)
+                    .await
+                    .with_context(|| format!("Failed to load component `{id}`"))
+            }
         }))
         .await?;
 
@@ -138,11 +143,12 @@ impl LocalLoader {
         &self,
         id: &KebabId,
         component: v2::Component,
+        resolver: &Resolver,
     ) -> Result<LockedComponent> {
         let allowed_outbound_hosts = component
             .normalized_allowed_outbound_hosts()
             .context("`allowed_http_hosts` is malformed")?;
-        AllowedHostsConfig::validate(&allowed_outbound_hosts)
+        AllowedHostsConfig::validate(&allowed_outbound_hosts, resolver)
             .context("`allowed_outbound_hosts` is malformed")?;
 
         let component_requires_service_chaining = requires_service_chaining(&component);
@@ -872,8 +878,7 @@ mod test {
         let err_ctx = format!("{err:#}");
         assert!(
             err_ctx.contains(r#""/" is not a valid destination file name"#),
-            "expected error to show destination file name but got {}",
-            err_ctx
+            "expected error to show destination file name but got {err_ctx}",
         );
         Ok(())
     }

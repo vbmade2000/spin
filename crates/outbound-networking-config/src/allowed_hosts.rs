@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, ensure, Context as _};
 use futures_util::future::{BoxFuture, Shared};
+use spin_expressions::Resolver;
 use url::Host;
 
 /// The domain used for service chaining.
@@ -433,6 +434,22 @@ impl PartialAllowedHostConfig {
             Self::Unresolved(t) => AllowedHostConfig::parse(resolver.resolve_template(&t)?),
         }
     }
+
+    /// Validates this config. Only templates that can be resolved with default
+    /// values from the given resolver will be fully validated.
+    fn validate(&self, resolver: &Resolver) -> anyhow::Result<()> {
+        if let Self::Unresolved(template) = self {
+            let Ok(resolved) = resolver.resolve_template(template) else {
+                // We're missing a default value so we can't validate further
+                return Ok(());
+            };
+            AllowedHostConfig::parse(&resolved).with_context(|| {
+                let template_str = template.to_string();
+                format!("using default variable value(s) with template {template_str:?} results in invalid config {resolved:?}")
+            })?;
+        }
+        Ok(())
+    }
 }
 
 /// Represents an allowed_outbound_hosts config.
@@ -457,10 +474,11 @@ impl AllowedHostsConfig {
         Ok(Self::SpecificHosts(allowed))
     }
 
-    /// Validate the given allowed_outbound_hosts values. Templated values are
-    /// only validated against template syntax.
-    pub fn validate<S: AsRef<str>>(hosts: &[S]) -> anyhow::Result<()> {
-        _ = Self::parse_partial(hosts)?;
+    /// Validates the given allowed_outbound_hosts values with the given resolver.
+    pub fn validate<S: AsRef<str>>(hosts: &[S], resolver: &Resolver) -> anyhow::Result<()> {
+        for partial in Self::parse_partial(hosts)? {
+            partial.validate(resolver)?;
+        }
         Ok(())
     }
 

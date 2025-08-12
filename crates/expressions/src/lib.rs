@@ -150,7 +150,7 @@ impl Resolver {
     }
 
     /// Resolves the given template.
-    fn resolve_template(&self, template: &Template) -> Result<String> {
+    pub fn resolve_template(&self, template: &Template) -> Result<String> {
         let mut resolved_parts: Vec<Cow<str>> = Vec::with_capacity(template.parts().len());
         for part in template.parts() {
             resolved_parts.push(match part {

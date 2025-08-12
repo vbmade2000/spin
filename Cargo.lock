@@ -8778,6 +8778,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spin-common",
+ "spin-expressions",
  "spin-locked-app",
  "spin-manifest",
  "spin-outbound-networking-config",
