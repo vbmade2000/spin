@@ -38,7 +38,21 @@ and then follow the
 [Rust](https://spinframework.dev/rust-components/), [JavaScript](https://spinframework.dev/javascript-components), [Python](https://spinframework.dev/python-components), or [Go](https://spinframework.dev/go-components/)
 language guides, and the [guide on writing Spin applications](https://spinframework.dev/writing-apps/).
 
+## Language support
+
+WebAssembly is a language-agnostic runtime: you can build WebAssembly components from a variety of source languages. Spin SDKs are available for several languages, including:
+
+* JavaScript: https://github.com/spinframework/spin-js-sdk
+* Rust: https://crates.io/crates/spin-sdk
+* Go: https://pkg.go.dev/github.com/fermyon/spin/sdk/go/v2
+* Python: https://github.com/spinframework/spin-python-sdk
+* Zig: https://github.com/dasimmet/zig-spin (third party)
+* Moonbit: https://github.com/gmlewis/spin-moonbit-sdk (third party)
+
+> The Spin framework team supports the JavaScript, Rust, Go, and Python SDKs. Other language integrations are supported by their authors, and we're grateful to them for their work!
+
 ## Usage
+
 Below is an example of using the `spin` CLI to create a new Spin application.  To run the example you will need to install the `wasm32-wasip1` target for Rust.
 
 ```bash
