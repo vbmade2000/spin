@@ -140,15 +140,13 @@ impl TemplateNewCommandCore {
 
         let (name, template_id) = self.resolve_name_template_syntax(&template_manager, &variant)?;
 
-        let template = match &template_id {
+        let template = match template_id {
             Some(template_id) => match template_manager
-                .get(template_id)
+                .get(&template_id)
                 .with_context(|| format!("Error retrieving template {template_id}"))?
             {
                 Some(template) => template,
-                None => match prompt_template(&template_manager, &variant, &[template_id.clone()])
-                    .await?
-                {
+                None => match prompt_template(&template_manager, &variant, &[template_id]).await? {
                     Some(template) => template,
                     None => return Ok(()),
                 },
