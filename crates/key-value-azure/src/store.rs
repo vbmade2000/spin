@@ -190,7 +190,18 @@ impl Store for AzureCosmosStore {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, Error> {
-        Ok(self.get_entity_by_id::<Key>(key).await?.is_some())
+        let mut stream = self
+            .client
+            .query_documents(Query::new(self.get_id_query(key)))
+            .query_cross_partition(true)
+            .max_item_count(1)
+            .into_stream::<Key>();
+
+        match stream.next().await {
+            Some(Ok(res)) => Ok(!res.results.is_empty()),
+            Some(Err(e)) => Err(log_error(e)),
+            None => Ok(false),
+        }
     }
 
     async fn get_keys(&self) -> Result<Vec<String>, Error> {
@@ -409,28 +420,6 @@ impl AzureCosmosStore {
         let query = self
             .client
             .query_documents(Query::new(self.get_query(key)))
-            .query_cross_partition(true)
-            .max_item_count(1);
-
-        // There can be no duplicated keys, so we create the stream and only take the first result.
-        let mut stream = query.into_stream::<F>();
-        let Some(res) = stream.next().await else {
-            return Ok(None);
-        };
-        Ok(res
-            .map_err(log_error)?
-            .results
-            .first()
-            .map(|(p, _)| p.clone()))
-    }
-
-    async fn get_entity_by_id<F>(&self, key: &str) -> Result<Option<F>, Error>
-    where
-        F: CosmosEntity + Send + Sync + serde::de::DeserializeOwned + Clone,
-    {
-        let query = self
-            .client
-            .query_documents(Query::new(self.get_id_query(key)))
             .query_cross_partition(true)
             .max_item_count(1);
 
