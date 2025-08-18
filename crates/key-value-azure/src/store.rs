@@ -458,7 +458,7 @@ impl AzureCosmosStore {
     }
 
     fn get_id_query(&self, key: &str) -> String {
-        let mut query = format!("SELECT c.id FROM c WHERE c.id='{key}'");
+        let mut query = format!("SELECT c.id, c.store_id FROM c WHERE c.id='{key}'");
         self.append_store_id(&mut query, true);
         query
     }
