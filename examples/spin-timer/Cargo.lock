@@ -4856,6 +4856,7 @@ dependencies = [
  "hyper-util",
  "reqwest",
  "rustls 0.23.25",
+ "serde",
  "spin-factor-outbound-networking",
  "spin-factors",
  "spin-telemetry",
