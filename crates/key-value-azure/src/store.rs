@@ -458,13 +458,19 @@ impl AzureCosmosStore {
     }
 
     fn get_id_query(&self, key: &str) -> String {
-        let mut query = format!("SELECT c.id, c.store_id FROM c WHERE c.id='{key}'");
+        let mut query = match self.store_id {
+            Some(_) => format!("SELECT c.id, c.store_id FROM c WHERE c.id='{key}'"),
+            None => format!("SELECT c.id FROM c WHERE c.id='{key}'"),
+        };
         self.append_store_id(&mut query, true);
         query
     }
 
     fn get_keys_query(&self) -> String {
-        let mut query = "SELECT c.id, c.store_id FROM c".to_owned();
+        let mut query = match self.store_id {
+            Some(_) => "SELECT c.id, c.store_id FROM c".to_owned(),
+            None => "SELECT c.id FROM c".to_owned(),
+        };
         self.append_store_id(&mut query, false);
         query
     }
