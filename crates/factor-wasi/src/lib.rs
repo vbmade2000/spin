@@ -16,10 +16,9 @@ use spin_factors::{
     RuntimeFactors, RuntimeFactorsInstanceState,
 };
 use wasmtime::component::HasData;
-use wasmtime_wasi::p2::{
-    IoImpl, IoView, StdinStream, StdoutStream, WasiCtx, WasiCtxBuilder, WasiImpl, WasiView,
-};
-use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable};
+use wasmtime_wasi::cli::{StdinStream, StdoutStream};
+use wasmtime_wasi::random::WasiRandomCtx;
+use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView};
 
 pub use wasmtime_wasi::SocketAddrUse;
 
@@ -36,12 +35,12 @@ impl WasiFactor {
 
     pub fn get_wasi_impl(
         runtime_instance_state: &mut impl RuntimeFactorsInstanceState,
-    ) -> Option<WasiImpl<impl WasiView + '_>> {
+    ) -> Option<WasiCtxView<'_>> {
         let (state, table) = runtime_instance_state.get_with_table::<WasiFactor>()?;
-        Some(WasiImpl(IoImpl(WasiImplInner {
+        Some(WasiCtxView {
             ctx: &mut state.ctx,
             table,
-        })))
+        })
     }
 }
 
@@ -50,33 +49,34 @@ impl WasiFactor {
 /// signatures.
 #[allow(clippy::type_complexity, reason = "sorry, blame alex")]
 trait InitContextExt: InitContext<WasiFactor> {
-    fn get_io(data: &mut Self::StoreData) -> IoImpl<WasiImplInner<'_>> {
-        let (state, table) = Self::get_data_with_table(data);
-        IoImpl(WasiImplInner {
-            ctx: &mut state.ctx,
-            table,
-        })
+    fn get_table(data: &mut Self::StoreData) -> &mut ResourceTable {
+        let (_state, table) = Self::get_data_with_table(data);
+        table
     }
 
     fn link_io_bindings(
         &mut self,
         add_to_linker: fn(
             &mut wasmtime::component::Linker<Self::StoreData>,
-            fn(&mut Self::StoreData) -> IoImpl<WasiImplInner<'_>>,
+            fn(&mut Self::StoreData) -> &mut ResourceTable,
         ) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        add_to_linker(self.linker(), Self::get_io)
+        add_to_linker(self.linker(), Self::get_table)
     }
 
-    fn get_wasi(data: &mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>> {
-        WasiImpl(Self::get_io(data))
+    fn get_wasi(data: &mut Self::StoreData) -> WasiCtxView<'_> {
+        let (state, table) = Self::get_data_with_table(data);
+        WasiCtxView {
+            ctx: &mut state.ctx,
+            table,
+        }
     }
 
     fn link_wasi_bindings(
         &mut self,
         add_to_linker: fn(
             &mut wasmtime::component::Linker<Self::StoreData>,
-            fn(&mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>>,
+            fn(&mut Self::StoreData) -> WasiCtxView<'_>,
         ) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         add_to_linker(self.linker(), Self::get_wasi)
@@ -87,13 +87,26 @@ trait InitContextExt: InitContext<WasiFactor> {
         add_to_linker: fn(
             &mut wasmtime::component::Linker<Self::StoreData>,
             &O,
-            fn(&mut Self::StoreData) -> WasiImpl<WasiImplInner<'_>>,
+            fn(&mut Self::StoreData) -> WasiCtxView<'_>,
         ) -> anyhow::Result<()>,
     ) -> anyhow::Result<()>
     where
         O: Default,
     {
         add_to_linker(self.linker(), &O::default(), Self::get_wasi)
+    }
+
+    fn link_random_bindings(
+        &mut self,
+        add_to_linker: fn(
+            &mut wasmtime::component::Linker<Self::StoreData>,
+            fn(&mut Self::StoreData) -> &mut WasiRandomCtx,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        add_to_linker(self.linker(), |data| {
+            let (state, _table) = Self::get_data_with_table(data);
+            state.ctx.random()
+        })
     }
 }
 
@@ -102,13 +115,19 @@ impl<T> InitContextExt for T where T: InitContext<WasiFactor> {}
 struct HasWasi;
 
 impl HasData for HasWasi {
-    type Data<'a> = WasiImpl<WasiImplInner<'a>>;
+    type Data<'a> = WasiCtxView<'a>;
 }
 
 struct HasIo;
 
 impl HasData for HasIo {
-    type Data<'a> = IoImpl<WasiImplInner<'a>>;
+    type Data<'a> = &'a mut ResourceTable;
+}
+
+struct HasRandom;
+
+impl HasData for HasRandom {
+    type Data<'a> = &'a mut WasiRandomCtx;
 }
 
 impl Factor for WasiFactor {
@@ -126,9 +145,9 @@ impl Factor for WasiFactor {
         ctx.link_io_bindings(bindings::io::error::add_to_linker::<_, HasIo>)?;
         ctx.link_io_bindings(bindings::io::poll::add_to_linker::<_, HasIo>)?;
         ctx.link_io_bindings(bindings::io::streams::add_to_linker::<_, HasIo>)?;
-        ctx.link_wasi_bindings(bindings::random::random::add_to_linker::<_, HasWasi>)?;
-        ctx.link_wasi_bindings(bindings::random::insecure::add_to_linker::<_, HasWasi>)?;
-        ctx.link_wasi_bindings(bindings::random::insecure_seed::add_to_linker::<_, HasWasi>)?;
+        ctx.link_random_bindings(bindings::random::random::add_to_linker::<_, HasRandom>)?;
+        ctx.link_random_bindings(bindings::random::insecure::add_to_linker::<_, HasRandom>)?;
+        ctx.link_random_bindings(bindings::random::insecure_seed::add_to_linker::<_, HasRandom>)?;
         ctx.link_wasi_default_bindings(bindings::cli::exit::add_to_linker::<_, HasWasi>)?;
         ctx.link_wasi_bindings(bindings::cli::environment::add_to_linker::<_, HasWasi>)?;
         ctx.link_wasi_bindings(bindings::cli::stdin::add_to_linker::<_, HasWasi>)?;
@@ -329,21 +348,4 @@ impl InstanceBuilder {
 
 pub struct InstanceState {
     ctx: WasiCtx,
-}
-
-struct WasiImplInner<'a> {
-    ctx: &'a mut WasiCtx,
-    table: &'a mut ResourceTable,
-}
-
-impl WasiView for WasiImplInner<'_> {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        self.ctx
-    }
-}
-
-impl IoView for WasiImplInner<'_> {
-    fn table(&mut self) -> &mut ResourceTable {
-        self.table
-    }
 }

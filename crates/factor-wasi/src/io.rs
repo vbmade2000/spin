@@ -1,11 +1,13 @@
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use spin_factors::anyhow;
-use wasmtime_wasi::p2::{
-    InputStream, OutputStream, Pollable, StdinStream, StdoutStream, StreamError,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
+use wasmtime_wasi::cli::{IsTerminal, StdinStream, StdoutStream};
+use wasmtime_wasi::p2::{InputStream, OutputStream, Pollable, StreamError};
 
 /// A [`OutputStream`] that writes to a `Write` type.
 ///
@@ -54,13 +56,34 @@ impl<T: Write + Send + Sync + 'static> OutputStream for PipedWriteStream<T> {
     }
 }
 
+impl<T: Write + Send + Sync + 'static> AsyncWrite for PipedWriteStream<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(self.0.lock().unwrap().write(buf))
+    }
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.0.lock().unwrap().flush())
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<T> IsTerminal for PipedWriteStream<T> {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
 impl<T: Write + Send + Sync + 'static> StdoutStream for PipedWriteStream<T> {
-    fn stream(&self) -> Box<dyn OutputStream> {
+    fn p2_stream(&self) -> Box<dyn OutputStream> {
         Box::new(self.clone())
     }
-
-    fn isatty(&self) -> bool {
-        false
+    fn async_stream(&self) -> Box<dyn AsyncWrite + Send + Sync> {
+        Box::new(self.clone())
     }
 }
 
@@ -95,6 +118,12 @@ impl<T> Clone for PipeReadStream<T> {
     }
 }
 
+impl<T> IsTerminal for PipeReadStream<T> {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
 impl<T: Read + Send + Sync + 'static> InputStream for PipeReadStream<T> {
     fn read(&mut self, size: usize) -> wasmtime_wasi::p2::StreamResult<bytes::Bytes> {
         let size = size.min(self.buffer.len());
@@ -113,17 +142,33 @@ impl<T: Read + Send + Sync + 'static> InputStream for PipeReadStream<T> {
     }
 }
 
+impl<T: Read + Send + Sync + 'static> AsyncRead for PipeReadStream<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let result = self
+            .inner
+            .lock()
+            .unwrap()
+            .read(buf.initialize_unfilled())
+            .map(|n| buf.advance(n));
+        Poll::Ready(result)
+    }
+}
+
 #[async_trait]
 impl<T: Read + Send + Sync + 'static> Pollable for PipeReadStream<T> {
     async fn ready(&mut self) {}
 }
 
 impl<T: Read + Send + Sync + 'static> StdinStream for PipeReadStream<T> {
-    fn stream(&self) -> Box<dyn InputStream> {
+    fn p2_stream(&self) -> Box<dyn InputStream> {
         Box::new(self.clone())
     }
 
-    fn isatty(&self) -> bool {
-        false
+    fn async_stream(&self) -> Box<dyn AsyncRead + Send + Sync> {
+        Box::new(self.clone())
     }
 }

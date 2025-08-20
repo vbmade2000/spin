@@ -267,10 +267,8 @@ mod tests {
             component::{Component, Linker},
             Config, Engine, Store,
         },
-        wasmtime_wasi::p2::{
-            bindings::Command, pipe::MemoryInputPipe, IoView, WasiCtx, WasiCtxBuilder, WasiView,
-        },
-        wasmtime_wasi::ResourceTable,
+        wasmtime_wasi::p2::{bindings::Command, pipe::MemoryInputPipe},
+        wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView},
     };
 
     async fn run_spin(module: &[u8]) -> Result<()> {
@@ -359,14 +357,12 @@ mod tests {
             ctx: WasiCtx,
             table: ResourceTable,
         }
-        impl IoView for Wasi {
-            fn table(&mut self) -> &mut ResourceTable {
-                &mut self.table
-            }
-        }
         impl WasiView for Wasi {
-            fn ctx(&mut self) -> &mut WasiCtx {
-                &mut self.ctx
+            fn ctx(&mut self) -> WasiCtxView<'_> {
+                WasiCtxView {
+                    ctx: &mut self.ctx,
+                    table: &mut self.table,
+                }
             }
         }
 

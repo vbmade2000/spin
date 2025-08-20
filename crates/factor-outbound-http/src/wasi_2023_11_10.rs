@@ -12,10 +12,8 @@ mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
         world: "wasi:http/proxy@0.2.0-rc-2023-11-10",
-        async: {
-            // Only need async exports
-            only_imports: [],
-        },
+        imports: { default: trappable },
+        exports: { default: async },
         with: {
             "wasi:io/poll/pollable": latest::io::poll::Pollable,
             "wasi:io/streams/input-stream": latest::io::streams::InputStream,
@@ -33,7 +31,6 @@ mod bindings {
             "wasi:http/types/future-trailers": latest::http::types::FutureTrailers,
             "wasi:http/types/request-options": latest::http::types::RequestOptions,
         },
-        trappable_imports: true,
     });
 }
 
