@@ -190,7 +190,18 @@ impl Store for AzureCosmosStore {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, Error> {
-        Ok(self.get_entity::<Key>(key).await?.is_some())
+        let mut stream = self
+            .client
+            .query_documents(Query::new(self.get_id_query(key)))
+            .query_cross_partition(true)
+            .max_item_count(1)
+            .into_stream::<Key>();
+
+        match stream.next().await {
+            Some(Ok(res)) => Ok(!res.results.is_empty()),
+            Some(Err(e)) => Err(log_error(e)),
+            None => Ok(false),
+        }
     }
 
     async fn get_keys(&self) -> Result<Vec<String>, Error> {
@@ -446,8 +457,14 @@ impl AzureCosmosStore {
         query
     }
 
+    fn get_id_query(&self, key: &str) -> String {
+        let mut query = format!("SELECT c.id, c.store_id FROM c WHERE c.id='{key}'");
+        self.append_store_id(&mut query, true);
+        query
+    }
+
     fn get_keys_query(&self) -> String {
-        let mut query = "SELECT * FROM c".to_owned();
+        let mut query = "SELECT c.id, c.store_id FROM c".to_owned();
         self.append_store_id(&mut query, false);
         query
     }
