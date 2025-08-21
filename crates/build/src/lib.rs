@@ -296,6 +296,9 @@ mod tests {
 
         let err = target_validation.errors()[0].to_string();
 
-        assert!(err.contains("world wasi:cli/command@0.2.0 does not provide an import named"));
+        assert!(err.contains("can't run in environment wasi-minimal"));
+        assert!(err.contains("world wasi:cli/command@0.2.0"));
+        assert!(err.contains("requires imports named"));
+        assert!(err.contains("wasi:cli/stdout"));
     }
 }

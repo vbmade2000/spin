@@ -150,6 +150,11 @@ impl CandidateWorld {
         &self.package_bytes
     }
 
+    /// Returns the world name (e.g. `command` in `wasi:cli/command`).
+    pub fn world_name(&self) -> &str {
+        self.world.name()
+    }
+
     fn from_package_bytes(world: &WorldName, bytes: Vec<u8>) -> anyhow::Result<Self> {
         let decoded = wit_component::decode(&bytes)
             .with_context(|| format!("Failed to decode package for environment {world}"))?;
@@ -383,9 +388,14 @@ mod test {
             err.contains("Component nscomp (nscomp.wasm) can't run in environment test"),
             "unexpected error {err}"
         );
-        assert!(err.contains(
-            "world spin:test/simple@1.0.0 does not provide an import named spin:test/evil@1.0.0"
-        ), "unexpected error {err}");
+        assert!(
+            err.contains("requires imports named"),
+            "unexpected error {err}"
+        );
+        assert!(
+            err.contains("spin:test/evil@1.0.0"),
+            "unexpected error {err}"
+        );
     }
 
     #[tokio::test]
