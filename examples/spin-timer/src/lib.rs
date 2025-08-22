@@ -8,7 +8,8 @@ use spin_trigger::{App, Trigger, TriggerApp};
 wasmtime::component::bindgen!({
     path: ".",
     world: "spin-timer",
-    async: true
+    imports: { default: async },
+    exports: { default: async },
 });
 
 #[derive(Args)]

@@ -36,8 +36,8 @@ use wasmtime::{
     component::{Component, HasSelf, InstancePre, Linker},
     Engine, Store,
 };
-use wasmtime_wasi::p2::{pipe::MemoryOutputPipe, IoView, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi::ResourceTable;
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 pub use test_key_value::KeyValueReport;
 pub use test_llm::LlmReport;
@@ -60,8 +60,7 @@ mod test_wasi;
 wasmtime::component::bindgen!({
     path: "../../wit",
     world: "fermyon:spin/host",
-    async: true,
-    trappable_imports: true,
+    imports: { default: async | trappable },
 });
 pub use fermyon::spin::*;
 
@@ -264,15 +263,12 @@ impl Context {
     }
 }
 
-impl IoView for Context {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-}
-
 impl WasiView for Context {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -321,7 +317,7 @@ async fn run_command(
                 // ownership once we return.
                 let table = ResourceTable::new();
                 store.data_mut().wasi = WasiCtxBuilder::new().build();
-                *store.data_mut().table() = table;
+                *store.data_mut().ctx().table = table;
                 let stderr =
                     std::mem::replace(&mut store.data_mut().stderr, MemoryOutputPipe::new(1024));
 

@@ -16,7 +16,8 @@ wasmtime::component::bindgen!({
     }
     "#,
     path: "../../wit",
-    async: true,
+    imports: { default: async | trappable },
+    exports: { default: async },
     // The following is a roundabout way of saying "the host implementations for these interfaces don't trap"
     trappable_error_type: {
         "fermyon:spin/config/error" => v1::config::Error,
@@ -39,7 +40,6 @@ wasmtime::component::bindgen!({
         "wasi:keyvalue/store/error" => wasi::keyvalue::store::Error,
         "wasi:keyvalue/atomics/cas-error" => wasi::keyvalue::atomics::CasError,
     },
-    trappable_imports: true,
 });
 
 pub use fermyon::spin as v1;

@@ -32,7 +32,6 @@ use tokio_rustls::client::TlsStream;
 use tower_service::Service;
 use tracing::{field::Empty, instrument, Instrument};
 use wasmtime::component::HasData;
-use wasmtime_wasi::p2::{IoImpl, IoView};
 use wasmtime_wasi_http::{
     bindings::http::types::ErrorCode,
     body::HyperOutgoingBody,
@@ -60,7 +59,7 @@ where
         C: spin_factors::InitContext<OutboundHttpFactor>,
     {
         let (state, table) = C::get_data_with_table(store);
-        WasiHttpImpl(IoImpl(WasiHttpImplInner { state, table }))
+        WasiHttpImpl(WasiHttpImplInner { state, table })
     }
     let get_http = get_http::<C> as fn(&mut C::StoreData) -> WasiHttpImpl<WasiHttpImplInner<'_>>;
     let linker = ctx.linker();
@@ -84,7 +83,7 @@ impl OutboundHttpFactor {
         runtime_instance_state: &mut impl RuntimeFactorsInstanceState,
     ) -> Option<WasiHttpImpl<impl WasiHttpView + '_>> {
         let (state, table) = runtime_instance_state.get_with_table::<OutboundHttpFactor>()?;
-        Some(WasiHttpImpl(IoImpl(WasiHttpImplInner { state, table })))
+        Some(WasiHttpImpl(WasiHttpImplInner { state, table }))
     }
 }
 
@@ -123,15 +122,13 @@ pub(crate) struct WasiHttpImplInner<'a> {
     table: &'a mut ResourceTable,
 }
 
-impl IoView for WasiHttpImplInner<'_> {
-    fn table(&mut self) -> &mut ResourceTable {
-        self.table
-    }
-}
-
 impl WasiHttpView for WasiHttpImplInner<'_> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.state.wasi_http_ctx
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        self.table
     }
 
     #[instrument(

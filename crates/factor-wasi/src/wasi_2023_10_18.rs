@@ -1,8 +1,8 @@
 use spin_factors::anyhow::{self, Result};
 use std::mem;
 use wasmtime::component::{Linker, Resource};
-use wasmtime_wasi::p2::{DynPollable, IoView, WasiImpl, WasiView};
-use wasmtime_wasi::TrappableError;
+use wasmtime_wasi::p2::DynPollable;
+use wasmtime_wasi::{TrappableError, WasiCtxView};
 
 mod latest {
     pub use wasmtime_wasi::p2::bindings::*;
@@ -15,63 +15,59 @@ mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
         world: "wasi:cli/reactor@0.2.0-rc-2023-10-18",
-        async: {
-            only_imports: [
-                "[drop]output-stream",
-                "[drop]input-stream",
-                "[method]descriptor.access-at",
-                "[method]descriptor.advise",
-                "[method]descriptor.change-directory-permissions-at",
-                "[method]descriptor.change-file-permissions-at",
-                "[method]descriptor.create-directory-at",
-                "[method]descriptor.get-flags",
-                "[method]descriptor.get-type",
-                "[method]descriptor.is-same-object",
-                "[method]descriptor.link-at",
-                "[method]descriptor.lock-exclusive",
-                "[method]descriptor.lock-shared",
-                "[method]descriptor.metadata-hash",
-                "[method]descriptor.metadata-hash-at",
-                "[method]descriptor.open-at",
-                "[method]descriptor.read",
-                "[method]descriptor.read-directory",
-                "[method]descriptor.readlink-at",
-                "[method]descriptor.remove-directory-at",
-                "[method]descriptor.rename-at",
-                "[method]descriptor.set-size",
-                "[method]descriptor.set-times",
-                "[method]descriptor.set-times-at",
-                "[method]descriptor.stat",
-                "[method]descriptor.stat-at",
-                "[method]descriptor.symlink-at",
-                "[method]descriptor.sync",
-                "[method]descriptor.sync-data",
-                "[method]descriptor.try-lock-exclusive",
-                "[method]descriptor.try-lock-shared",
-                "[method]descriptor.unlink-file-at",
-                "[method]descriptor.unlock",
-                "[method]descriptor.write",
-                "[method]input-stream.blocking-read",
-                "[method]input-stream.blocking-skip",
-                "[method]output-stream.forward",
-                "[method]output-stream.blocking-splice",
-                "[method]output-stream.blocking-flush",
-                "[method]output-stream.blocking-write",
-                "[method]output-stream.blocking-write-and-flush",
-                "[method]output-stream.blocking-write-zeroes-and-flush",
-                "[method]directory-entry-stream.read-directory-entry",
-                "poll-list",
-                "poll-one",
+        imports: {
+            "wasi:io/streams/[drop]output-stream": async | trappable,
+            "wasi:io/streams/[drop]input-stream": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.access-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.advise": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.change-directory-permissions-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.change-file-permissions-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.create-directory-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.get-flags": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.get-type": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.is-same-object": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.link-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.lock-exclusive": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.lock-shared": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.metadata-hash": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.metadata-hash-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.open-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.read": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.read-directory": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.readlink-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.remove-directory-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.rename-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.set-size": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.set-times": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.set-times-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.stat": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.stat-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.symlink-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.sync": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.sync-data": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.try-lock-exclusive": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.try-lock-shared": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.unlink-file-at": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.unlock": async | trappable,
+            "wasi:filesystem/types/[method]descriptor.write": async | trappable,
+            "wasi:filesystem/types/[method]directory-entry-stream.read-directory-entry": async | trappable,
+            "wasi:io/streams/[method]input-stream.blocking-read": async | trappable,
+            "wasi:io/streams/[method]input-stream.blocking-skip": async | trappable,
+            "wasi:io/streams/[method]output-stream.forward": async | trappable,
+            "wasi:io/streams/[method]output-stream.blocking-splice": async | trappable,
+            "wasi:io/streams/[method]output-stream.blocking-flush": async | trappable,
+            "wasi:io/streams/[method]output-stream.blocking-write-and-flush": async | trappable,
+            "wasi:io/streams/[method]output-stream.blocking-write-zeroes-and-flush": async | trappable,
+            "wasi:io/poll/poll-list": async | trappable,
+            "wasi:io/poll/poll-one": async | trappable,
 
-                "[method]tcp-socket.start-bind",
-                "[method]tcp-socket.start-connect",
-                "[method]udp-socket.finish-connect",
-                "[method]udp-socket.receive",
-                "[method]udp-socket.send",
-                "[method]udp-socket.start-bind",
-                "[method]udp-socket.stream",
-                "[method]outgoing-datagram-stream.send",
-            ],
+            "wasi:sockets/tcp/[method]tcp-socket.start-bind": async | trappable,
+            "wasi:sockets/tcp/[method]tcp-socket.start-connect": async | trappable,
+            "wasi:sockets/udp/[method]udp-socket.finish-connect": async | trappable,
+            "wasi:sockets/udp/[method]udp-socket.receive": async | trappable,
+            "wasi:sockets/udp/[method]udp-socket.send": async | trappable,
+            "wasi:sockets/udp/[method]udp-socket.start-bind": async | trappable,
+            default: trappable,
         },
         with: {
             "wasi:io/poll/pollable": latest::io::poll::Pollable,
@@ -87,7 +83,6 @@ mod bindings {
             "wasi:sockets/network/network": latest::sockets::network::Network,
             "wasi:sockets/ip-name-lookup/resolve-address-stream": latest::sockets::ip_name_lookup::ResolveAddressStream,
         },
-        trappable_imports: true,
     });
 }
 
@@ -117,11 +112,11 @@ use wasi::sockets::tcp::{
 };
 use wasi::sockets::udp::Datagram;
 
-use crate::{HasWasi, WasiImplInner};
+use crate::HasWasi;
 
 pub fn add_to_linker<T>(
     linker: &mut Linker<T>,
-    closure: fn(&mut T) -> WasiImpl<WasiImplInner<'_>>,
+    closure: fn(&mut T) -> WasiCtxView<'_>,
 ) -> Result<()>
 where
     T: Send + 'static,
@@ -155,10 +150,7 @@ where
     Ok(())
 }
 
-impl<T> wasi::clocks::monotonic_clock::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::clocks::monotonic_clock::Host for WasiCtxView<'_> {
     fn now(&mut self) -> wasmtime::Result<Instant> {
         latest::clocks::monotonic_clock::Host::now(self)
     }
@@ -180,10 +172,7 @@ where
     }
 }
 
-impl<T> wasi::clocks::wall_clock::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::clocks::wall_clock::Host for WasiCtxView<'_> {
     fn now(&mut self) -> wasmtime::Result<Datetime> {
         Ok(latest::clocks::wall_clock::Host::now(self)?.into())
     }
@@ -193,10 +182,7 @@ where
     }
 }
 
-impl<T> wasi::filesystem::types::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::Host for WasiCtxView<'_> {
     fn filesystem_error_code(
         &mut self,
         err: Resource<wasi::filesystem::types::Error>,
@@ -205,10 +191,7 @@ where
     }
 }
 
-impl<T> wasi::filesystem::types::HostDescriptor for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::HostDescriptor for WasiCtxView<'_> {
     fn read_via_stream(
         &mut self,
         self_: Resource<Descriptor>,
@@ -602,10 +585,7 @@ where
     }
 }
 
-impl<T> wasi::filesystem::types::HostDirectoryEntryStream for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::filesystem::types::HostDirectoryEntryStream for WasiCtxView<'_> {
     async fn read_directory_entry(
         &mut self,
         self_: Resource<DirectoryEntryStream>,
@@ -622,62 +602,47 @@ where
     }
 }
 
-impl<T> wasi::filesystem::preopens::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::filesystem::preopens::Host for WasiCtxView<'_> {
     fn get_directories(&mut self) -> wasmtime::Result<Vec<(Resource<Descriptor>, String)>> {
         latest::filesystem::preopens::Host::get_directories(self)
     }
 }
 
-impl<T> wasi::io::poll::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::io::poll::Host for WasiCtxView<'_> {
     async fn poll_list(&mut self, list: Vec<Resource<DynPollable>>) -> wasmtime::Result<Vec<u32>> {
-        latest::io::poll::Host::poll(&mut self.0, list).await
+        latest::io::poll::Host::poll(self.table, list).await
     }
 
     async fn poll_one(&mut self, rep: Resource<DynPollable>) -> wasmtime::Result<()> {
-        latest::io::poll::HostPollable::block(&mut self.0, rep).await
+        latest::io::poll::HostPollable::block(self.table, rep).await
     }
 }
 
-impl<T> wasi::io::poll::HostPollable for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::io::poll::HostPollable for WasiCtxView<'_> {
     fn drop(&mut self, rep: Resource<DynPollable>) -> wasmtime::Result<()> {
-        latest::io::poll::HostPollable::drop(&mut self.0, rep)
+        latest::io::poll::HostPollable::drop(self.table, rep)
     }
 }
 
-impl<T> wasi::io::streams::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::io::streams::Host for WasiCtxView<'_> {}
 
-impl<T> wasi::io::streams::HostError for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::io::streams::HostError for WasiCtxView<'_> {
     fn to_debug_string(&mut self, self_: Resource<Error>) -> wasmtime::Result<String> {
-        latest::io::error::HostError::to_debug_string(&mut self.0, self_)
+        latest::io::error::HostError::to_debug_string(self.table, self_)
     }
 
     fn drop(&mut self, rep: Resource<Error>) -> wasmtime::Result<()> {
-        latest::io::error::HostError::drop(&mut self.0, rep)
+        latest::io::error::HostError::drop(self.table, rep)
     }
 }
 
-impl<T> wasi::io::streams::HostInputStream for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::io::streams::HostInputStream for WasiCtxView<'_> {
     fn read(
         &mut self,
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
-        let result = latest::io::streams::HostInputStream::read(&mut self.0, self_, len);
+        let result = latest::io::streams::HostInputStream::read(self.table, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -687,7 +652,7 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<Vec<u8>, StreamError>> {
         let result =
-            latest::io::streams::HostInputStream::blocking_read(&mut self.0, self_, len).await;
+            latest::io::streams::HostInputStream::blocking_read(self.table, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -696,7 +661,7 @@ where
         self_: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostInputStream::skip(&mut self.0, self_, len);
+        let result = latest::io::streams::HostInputStream::skip(self.table, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -706,7 +671,7 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
         let result =
-            latest::io::streams::HostInputStream::blocking_skip(&mut self.0, self_, len).await;
+            latest::io::streams::HostInputStream::blocking_skip(self.table, self_, len).await;
         convert_stream_result(self, result)
     }
 
@@ -714,23 +679,20 @@ where
         &mut self,
         self_: Resource<InputStream>,
     ) -> wasmtime::Result<Resource<DynPollable>> {
-        latest::io::streams::HostInputStream::subscribe(&mut self.0, self_)
+        latest::io::streams::HostInputStream::subscribe(self.table, self_)
     }
 
     async fn drop(&mut self, rep: Resource<InputStream>) -> wasmtime::Result<()> {
-        latest::io::streams::HostInputStream::drop(&mut self.0, rep).await
+        latest::io::streams::HostInputStream::drop(self.table, rep).await
     }
 }
 
-impl<T> wasi::io::streams::HostOutputStream for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::io::streams::HostOutputStream for WasiCtxView<'_> {
     fn check_write(
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostOutputStream::check_write(&mut self.0, self_);
+        let result = latest::io::streams::HostOutputStream::check_write(self.table, self_);
         convert_stream_result(self, result)
     }
 
@@ -739,7 +701,7 @@ where
         self_: Resource<OutputStream>,
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::write(&mut self.0, self_, contents);
+        let result = latest::io::streams::HostOutputStream::write(self.table, self_, contents);
         convert_stream_result(self, result)
     }
 
@@ -749,9 +711,7 @@ where
         contents: Vec<u8>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
         let result = latest::io::streams::HostOutputStream::blocking_write_and_flush(
-            &mut self.0,
-            self_,
-            contents,
+            self.table, self_, contents,
         )
         .await;
         convert_stream_result(self, result)
@@ -761,7 +721,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::flush(&mut self.0, self_);
+        let result = latest::io::streams::HostOutputStream::flush(self.table, self_);
         convert_stream_result(self, result)
     }
 
@@ -769,8 +729,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result =
-            latest::io::streams::HostOutputStream::blocking_flush(&mut self.0, self_).await;
+        let result = latest::io::streams::HostOutputStream::blocking_flush(self.table, self_).await;
         convert_stream_result(self, result)
     }
 
@@ -778,7 +737,7 @@ where
         &mut self,
         self_: Resource<OutputStream>,
     ) -> wasmtime::Result<Resource<DynPollable>> {
-        latest::io::streams::HostOutputStream::subscribe(&mut self.0, self_)
+        latest::io::streams::HostOutputStream::subscribe(self.table, self_)
     }
 
     fn write_zeroes(
@@ -786,7 +745,7 @@ where
         self_: Resource<OutputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
-        let result = latest::io::streams::HostOutputStream::write_zeroes(&mut self.0, self_, len);
+        let result = latest::io::streams::HostOutputStream::write_zeroes(self.table, self_, len);
         convert_stream_result(self, result)
     }
 
@@ -796,9 +755,7 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<(), StreamError>> {
         let result = latest::io::streams::HostOutputStream::blocking_write_zeroes_and_flush(
-            &mut self.0,
-            self_,
-            len,
+            self.table, self_, len,
         )
         .await;
         convert_stream_result(self, result)
@@ -810,7 +767,7 @@ where
         src: Resource<InputStream>,
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
-        let result = latest::io::streams::HostOutputStream::splice(&mut self.0, self_, src, len);
+        let result = latest::io::streams::HostOutputStream::splice(self.table, self_, src, len);
         convert_stream_result(self, result)
     }
 
@@ -821,7 +778,7 @@ where
         len: u64,
     ) -> wasmtime::Result<Result<u64, StreamError>> {
         let result =
-            latest::io::streams::HostOutputStream::blocking_splice(&mut self.0, self_, src, len)
+            latest::io::streams::HostOutputStream::blocking_splice(self.table, self_, src, len)
                 .await;
         convert_stream_result(self, result)
     }
@@ -835,58 +792,43 @@ where
     }
 
     async fn drop(&mut self, rep: Resource<OutputStream>) -> wasmtime::Result<()> {
-        latest::io::streams::HostOutputStream::drop(&mut self.0, rep).await
+        latest::io::streams::HostOutputStream::drop(self.table, rep).await
     }
 }
 
-impl<T> wasi::random::random::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::random::random::Host for WasiCtxView<'_> {
     fn get_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
-        latest::random::random::Host::get_random_bytes(self, len)
+        latest::random::random::Host::get_random_bytes(self.ctx.random(), len)
     }
 
     fn get_random_u64(&mut self) -> wasmtime::Result<u64> {
-        latest::random::random::Host::get_random_u64(self)
+        latest::random::random::Host::get_random_u64(self.ctx.random())
     }
 }
 
-impl<T> wasi::random::insecure::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::random::insecure::Host for WasiCtxView<'_> {
     fn get_insecure_random_bytes(&mut self, len: u64) -> wasmtime::Result<Vec<u8>> {
-        latest::random::insecure::Host::get_insecure_random_bytes(self, len)
+        latest::random::insecure::Host::get_insecure_random_bytes(self.ctx.random(), len)
     }
 
     fn get_insecure_random_u64(&mut self) -> wasmtime::Result<u64> {
-        latest::random::insecure::Host::get_insecure_random_u64(self)
+        latest::random::insecure::Host::get_insecure_random_u64(self.ctx.random())
     }
 }
 
-impl<T> wasi::random::insecure_seed::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::random::insecure_seed::Host for WasiCtxView<'_> {
     fn insecure_seed(&mut self) -> wasmtime::Result<(u64, u64)> {
-        latest::random::insecure_seed::Host::insecure_seed(self)
+        latest::random::insecure_seed::Host::insecure_seed(self.ctx.random())
     }
 }
 
-impl<T> wasi::cli::exit::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::exit::Host for WasiCtxView<'_> {
     fn exit(&mut self, status: Result<(), ()>) -> wasmtime::Result<()> {
         latest::cli::exit::Host::exit(self, status)
     }
 }
 
-impl<T> wasi::cli::environment::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::environment::Host for WasiCtxView<'_> {
     fn get_environment(&mut self) -> wasmtime::Result<Vec<(String, String)>> {
         latest::cli::environment::Host::get_environment(self)
     }
@@ -900,88 +842,61 @@ where
     }
 }
 
-impl<T> wasi::cli::stdin::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::stdin::Host for WasiCtxView<'_> {
     fn get_stdin(&mut self) -> wasmtime::Result<Resource<InputStream>> {
         latest::cli::stdin::Host::get_stdin(self)
     }
 }
 
-impl<T> wasi::cli::stdout::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::stdout::Host for WasiCtxView<'_> {
     fn get_stdout(&mut self) -> wasmtime::Result<Resource<OutputStream>> {
         latest::cli::stdout::Host::get_stdout(self)
     }
 }
 
-impl<T> wasi::cli::stderr::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::stderr::Host for WasiCtxView<'_> {
     fn get_stderr(&mut self) -> wasmtime::Result<Resource<OutputStream>> {
         latest::cli::stderr::Host::get_stderr(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stdin::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stdin::Host for WasiCtxView<'_> {
     fn get_terminal_stdin(&mut self) -> wasmtime::Result<Option<Resource<TerminalInput>>> {
         latest::cli::terminal_stdin::Host::get_terminal_stdin(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stdout::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stdout::Host for WasiCtxView<'_> {
     fn get_terminal_stdout(&mut self) -> wasmtime::Result<Option<Resource<TerminalOutput>>> {
         latest::cli::terminal_stdout::Host::get_terminal_stdout(self)
     }
 }
 
-impl<T> wasi::cli::terminal_stderr::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_stderr::Host for WasiCtxView<'_> {
     fn get_terminal_stderr(&mut self) -> wasmtime::Result<Option<Resource<TerminalOutput>>> {
         latest::cli::terminal_stderr::Host::get_terminal_stderr(self)
     }
 }
 
-impl<T> wasi::cli::terminal_input::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::cli::terminal_input::Host for WasiCtxView<'_> {}
 
-impl<T> wasi::cli::terminal_input::HostTerminalInput for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_input::HostTerminalInput for WasiCtxView<'_> {
     fn drop(&mut self, rep: Resource<TerminalInput>) -> wasmtime::Result<()> {
         latest::cli::terminal_input::HostTerminalInput::drop(self, rep)
     }
 }
 
-impl<T> wasi::cli::terminal_output::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::cli::terminal_output::Host for WasiCtxView<'_> {}
 
-impl<T> wasi::cli::terminal_output::HostTerminalOutput for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::cli::terminal_output::HostTerminalOutput for WasiCtxView<'_> {
     fn drop(&mut self, rep: Resource<TerminalOutput>) -> wasmtime::Result<()> {
         latest::cli::terminal_output::HostTerminalOutput::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::tcp::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::sockets::tcp::Host for WasiCtxView<'_> {}
 
-impl<T> wasi::sockets::tcp::HostTcpSocket for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::tcp::HostTcpSocket for WasiCtxView<'_> {
     async fn start_bind(
         &mut self,
         self_: Resource<TcpSocket>,
@@ -1226,10 +1141,7 @@ where
     }
 }
 
-impl<T> wasi::sockets::tcp_create_socket::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::tcp_create_socket::Host for WasiCtxView<'_> {
     fn create_tcp_socket(
         &mut self,
         address_family: IpAddressFamily,
@@ -1241,7 +1153,7 @@ where
     }
 }
 
-impl<T> wasi::sockets::udp::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::sockets::udp::Host for WasiCtxView<'_> {}
 
 /// Between the snapshot of WASI that this file is implementing and the current
 /// implementation of WASI UDP sockets were redesigned slightly to deal with
@@ -1261,12 +1173,12 @@ pub enum UdpSocket {
 }
 
 impl UdpSocket {
-    async fn finish_connect<T: WasiView>(
-        table: &mut WasiImpl<T>,
+    async fn finish_connect(
+        table: &mut WasiCtxView<'_>,
         socket: &Resource<UdpSocket>,
         explicit: bool,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let state = table.table().get_mut(socket)?;
+        let state = table.table.get_mut(socket)?;
         let (new_socket, addr) = match mem::replace(state, UdpSocket::Dummy) {
             // Implicit finishes will call `stream` for sockets in the initial
             // state.
@@ -1286,7 +1198,7 @@ impl UdpSocket {
             Ok(pair) => pair,
             Err(e) => return Ok(Err(e)),
         };
-        *table.table().get_mut(socket)? = UdpSocket::Connected {
+        *table.table.get_mut(socket)? = UdpSocket::Connected {
             socket: new_socket,
             incoming,
             outgoing,
@@ -1305,17 +1217,14 @@ impl UdpSocket {
     }
 }
 
-impl<T> wasi::sockets::udp::HostUdpSocket for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::udp::HostUdpSocket for WasiCtxView<'_> {
     async fn start_bind(
         &mut self,
         self_: Resource<UdpSocket>,
         network: Resource<Network>,
         local_address: IpSocketAddress,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(
             latest::sockets::udp::HostUdpSocket::start_bind(
                 self,
@@ -1331,7 +1240,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::finish_bind(
             self, socket,
         ))
@@ -1343,7 +1252,7 @@ where
         _network: Resource<Network>,
         remote_address: IpSocketAddress,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get_mut(&self_)?;
+        let socket = self.table.get_mut(&self_)?;
         let (new_state, result) = match mem::replace(socket, UdpSocket::Dummy) {
             UdpSocket::Initial(socket) => (UdpSocket::Connecting(socket, remote_address), Ok(())),
             other => (other, Err(SocketErrorCode::ConcurrencyConflict)),
@@ -1372,7 +1281,7 @@ where
 
         // Use our connected state to acquire the `incoming-datagram-stream`
         // resource, then receive some datagrams.
-        let incoming = match self.table().get(&self_)? {
+        let incoming = match self.table.get(&self_)? {
             UdpSocket::Connected { incoming, .. } => Resource::new_borrow(incoming.rep()),
             _ => return Ok(Err(SocketErrorCode::ConcurrencyConflict)),
         };
@@ -1401,7 +1310,7 @@ where
 
         // Use our connected state to acquire the `outgoing-datagram-stream`
         // resource.
-        let outgoing = match self.table().get(&self_)? {
+        let outgoing = match self.table.get(&self_)? {
             UdpSocket::Connected { outgoing, .. } => Resource::new_borrow(outgoing.rep()),
             _ => return Ok(Err(SocketErrorCode::ConcurrencyConflict)),
         };
@@ -1441,7 +1350,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::local_address(
             self, socket,
         ))
@@ -1451,14 +1360,14 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<IpSocketAddress, SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::remote_address(
             self, socket,
         ))
     }
 
     fn address_family(&mut self, self_: Resource<UdpSocket>) -> wasmtime::Result<IpAddressFamily> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         latest::sockets::udp::HostUdpSocket::address_family(self, socket).map(|e| e.into())
     }
 
@@ -1481,7 +1390,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u8, SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::unicast_hop_limit(
             self, socket,
         ))
@@ -1492,7 +1401,7 @@ where
         self_: Resource<UdpSocket>,
         value: u8,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::set_unicast_hop_limit(
             self, socket, value,
         ))
@@ -1502,7 +1411,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::receive_buffer_size(
             self, socket,
         ))
@@ -1513,7 +1422,7 @@ where
         self_: Resource<UdpSocket>,
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(
             latest::sockets::udp::HostUdpSocket::set_receive_buffer_size(self, socket, value),
         )
@@ -1523,7 +1432,7 @@ where
         &mut self,
         self_: Resource<UdpSocket>,
     ) -> wasmtime::Result<Result<u64, SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::send_buffer_size(
             self, socket,
         ))
@@ -1534,19 +1443,19 @@ where
         self_: Resource<UdpSocket>,
         value: u64,
     ) -> wasmtime::Result<Result<(), SocketErrorCode>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         convert_result(latest::sockets::udp::HostUdpSocket::set_send_buffer_size(
             self, socket, value,
         ))
     }
 
     fn subscribe(&mut self, self_: Resource<UdpSocket>) -> wasmtime::Result<Resource<DynPollable>> {
-        let socket = self.table().get(&self_)?.inner()?;
+        let socket = self.table.get(&self_)?.inner()?;
         latest::sockets::udp::HostUdpSocket::subscribe(self, socket)
     }
 
     fn drop(&mut self, rep: Resource<UdpSocket>) -> wasmtime::Result<()> {
-        let me = self.table().delete(rep)?;
+        let me = self.table.delete(rep)?;
         let socket = match me {
             UdpSocket::Initial(s) => s,
             UdpSocket::Connecting(s, _) => s,
@@ -1565,10 +1474,7 @@ where
     }
 }
 
-impl<T> wasi::sockets::udp_create_socket::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::udp_create_socket::Host for WasiCtxView<'_> {
     fn create_udp_socket(
         &mut self,
         address_family: IpAddressFamily,
@@ -1581,35 +1487,26 @@ where
             Ok(socket) => socket,
             Err(e) => return Ok(Err(e)),
         };
-        let socket = self.table().push(UdpSocket::Initial(socket))?;
+        let socket = self.table.push(UdpSocket::Initial(socket))?;
         Ok(Ok(socket))
     }
 }
 
-impl<T> wasi::sockets::instance_network::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::instance_network::Host for WasiCtxView<'_> {
     fn instance_network(&mut self) -> wasmtime::Result<Resource<Network>> {
         latest::sockets::instance_network::Host::instance_network(self)
     }
 }
 
-impl<T> wasi::sockets::network::Host for WasiImpl<T> where T: WasiView {}
+impl wasi::sockets::network::Host for WasiCtxView<'_> {}
 
-impl<T> wasi::sockets::network::HostNetwork for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::network::HostNetwork for WasiCtxView<'_> {
     fn drop(&mut self, rep: Resource<Network>) -> wasmtime::Result<()> {
         latest::sockets::network::HostNetwork::drop(self, rep)
     }
 }
 
-impl<T> wasi::sockets::ip_name_lookup::Host for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::ip_name_lookup::Host for WasiCtxView<'_> {
     fn resolve_addresses(
         &mut self,
         network: Resource<Network>,
@@ -1623,10 +1520,7 @@ where
     }
 }
 
-impl<T> wasi::sockets::ip_name_lookup::HostResolveAddressStream for WasiImpl<T>
-where
-    T: WasiView,
-{
+impl wasi::sockets::ip_name_lookup::HostResolveAddressStream for WasiCtxView<'_> {
     fn resolve_next_address(
         &mut self,
         self_: Resource<ResolveAddressStream>,
@@ -1666,7 +1560,7 @@ where
 }
 
 fn convert_stream_result<T, T2>(
-    mut view: impl WasiView,
+    view: &mut WasiCtxView<'_>,
     result: Result<T, wasmtime_wasi::p2::StreamError>,
 ) -> wasmtime::Result<Result<T2, StreamError>>
 where
@@ -1676,7 +1570,7 @@ where
         Ok(e) => Ok(Ok(e.into())),
         Err(wasmtime_wasi::p2::StreamError::Closed) => Ok(Err(StreamError::Closed)),
         Err(wasmtime_wasi::p2::StreamError::LastOperationFailed(e)) => {
-            let e = view.table().push(e)?;
+            let e = view.table.push(e)?;
             Ok(Err(StreamError::LastOperationFailed(e)))
         }
         Err(wasmtime_wasi::p2::StreamError::Trap(e)) => Err(e),
