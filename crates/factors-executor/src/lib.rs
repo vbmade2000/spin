@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context;
 use spin_app::{App, AppComponent};
-use spin_core::{async_trait, Component};
+use spin_core::{async_trait, wasmtime::CallHook, Component};
 use spin_factors::{
     AsInstanceState, ConfiguredApp, Factor, HasInstanceBuilder, RuntimeFactors,
     RuntimeFactorsInstanceState,
@@ -243,15 +243,54 @@ impl<T: RuntimeFactors, U: Send> FactorsInstanceBuilder<'_, T, U> {
         spin_core::Instance,
         spin_core::Store<InstanceState<T::InstanceState, U>>,
     )> {
+        println!("Instantiated #############################");
         let instance_state = InstanceState {
             core: Default::default(),
             factors: self.factors.build_instance_state(self.factor_builders)?,
             executor: executor_instance_state,
         };
         let mut store = self.store_builder.build(instance_state)?;
+        #[cfg(feature = "call-hook")]
+        store.as_mut().call_hook(|mut store, hook|{handle_event(hook)});        
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         Ok((instance, store))
     }
+}
+
+// struct CpuTimeCallHook;
+
+// impl CpuTimeCallHook {
+fn handle_event(ch: CallHook) ->  anyhow::Result<()>{
+    println!("handle event called");
+    // Do nothing
+    if ch.entering_host() {
+        // let now = Local::now();
+        // println!("{}", now.format("Entering the host %Y-%m-%d %H:%M:%S%.3f"));
+        println!("=> Entering the host");
+    }
+
+    if ch.exiting_host() {
+        // let now = Local::now();
+        // println!("{}", now.format("Exiting the host %Y-%m-%d %H:%M:%S%.3f"));
+        println!("=> Exiting the host");
+    }
+
+    // match ch {
+    //     CallHook::CallingHost => {
+    //         println!("=> CallingHost")
+    //     }
+    //     CallHook::ReturningFromHost => {
+    //         println!("=> ReturningFromHost")
+    //     }
+    //     CallHook::CallingWasm => {
+    //         println!("=> CallingWasm")
+    //     }
+    //     CallHook::ReturningFromWasm => {
+    //         println!("=> ReturningFromWasm")
+    //     }
+    // }
+
+    Ok(())
 }
 
 /// InstanceState is the [`spin_core::Store`] `data` for an instance.
