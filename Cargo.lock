@@ -8709,6 +8709,7 @@ name = "spin-factors-executor"
 version = "3.5.0-pre0"
 dependencies = [
  "anyhow",
+ "chrono",
  "spin-app",
  "spin-core",
  "spin-factor-wasi",

@@ -1,6 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
 use anyhow::Context;
+use chrono::{DateTime, Local};
 use spin_app::{App, AppComponent};
 use spin_core::{async_trait, wasmtime::CallHook, Component};
 use spin_factors::{
@@ -251,7 +252,7 @@ impl<T: RuntimeFactors, U: Send> FactorsInstanceBuilder<'_, T, U> {
         };
         let mut store = self.store_builder.build(instance_state)?;
         #[cfg(feature = "call-hook")]
-        store.as_mut().call_hook(|mut store, hook|{handle_event(hook)});        
+        store.as_mut().call_hook(|_store, hook|{handle_event(hook)});
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         Ok((instance, store))
     }
@@ -264,15 +265,13 @@ fn handle_event(ch: CallHook) ->  anyhow::Result<()>{
     println!("handle event called");
     // Do nothing
     if ch.entering_host() {
-        // let now = Local::now();
-        // println!("{}", now.format("Entering the host %Y-%m-%d %H:%M:%S%.3f"));
-        println!("=> Entering the host");
+        let now: DateTime<Local> = SystemTime::now().into();
+        println!("{} => Entering the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
     }
 
     if ch.exiting_host() {
-        // let now = Local::now();
-        // println!("{}", now.format("Exiting the host %Y-%m-%d %H:%M:%S%.3f"));
-        println!("=> Exiting the host");
+        let now: DateTime<Local> = SystemTime::now().into();
+        println!("{} => Exiting the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
     }
 
     // match ch {

@@ -73,7 +73,7 @@ impl Default for Config {
     fn default() -> Self {
         let mut inner = wasmtime::Config::new();
         inner.async_support(true);
-        inner.epoch_interruption(true);
+        inner.epoch_interruption(false);
         inner.wasm_component_model(true);
         // If targeting musl, disable native unwind to address this issue:
         // https://github.com/spinframework/spin/issues/2889
