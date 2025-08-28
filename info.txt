@@ -19,3 +19,6 @@ It manages the instantiation of the Spin component instance.
 Tasks
 Potential Solution: Use call_hook used in FactorsInstanceBuilder to calculate things.
 1. call_hook handler doesn't have identity for component. It doesn't know which component entered/exited the host and wasm. So first task is to get component id.
+Solution: self.app_component.id(); method of the same struct that is associated with "instantiate" method can be used to get Id of the component that is going to be instantiated. Count how many times instance is created for compoenents and store it somewhere.
+
+2. Decide where to store the counter received from above solution.
