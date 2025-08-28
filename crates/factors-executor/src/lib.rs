@@ -250,6 +250,9 @@ impl<T: RuntimeFactors, U: Send> FactorsInstanceBuilder<'_, T, U> {
             factors: self.factors.build_instance_state(self.factor_builders)?,
             executor: executor_instance_state,
         };
+
+        let c = self.app_component.id();
+        println!("Component ID {:#?}", c);
         let mut store = self.store_builder.build(instance_state)?;
         #[cfg(feature = "call-hook")]
         store.as_mut().call_hook(|_store, hook|{handle_event(hook)});
@@ -262,16 +265,16 @@ impl<T: RuntimeFactors, U: Send> FactorsInstanceBuilder<'_, T, U> {
 
 // impl CpuTimeCallHook {
 fn handle_event(ch: CallHook) ->  anyhow::Result<()>{
-    println!("handle event called");
+    // println!("handle event called");
     // Do nothing
     if ch.entering_host() {
         let now: DateTime<Local> = SystemTime::now().into();
-        println!("{} => Entering the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+        // println!("{} => Entering the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
     }
 
     if ch.exiting_host() {
         let now: DateTime<Local> = SystemTime::now().into();
-        println!("{} => Exiting the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+        // println!("{} => Exiting the host", now.format("%Y-%m-%d %H:%M:%S%.3f"));
     }
 
     // match ch {

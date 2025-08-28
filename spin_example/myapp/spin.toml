@@ -15,3 +15,25 @@ source = "app.wasm"
 [component.myapp.build]
 command = "componentize-py -w spin-http componentize app -o app.wasm"
 watch = ["*.py", "requirements.txt"]
+
+[[trigger.http]]
+route = "/comp2"
+component = "comp2"
+
+[component.comp2]
+source = "comp2/app.wasm"
+[component.comp2.build]
+command = "componentize-py -w spin-http componentize app -o app.wasm"
+workdir = "comp2"
+watch = ["*.py", "requirements.txt"]
+
+[[trigger.http]]
+route = "/comp3"
+component = "comp3"
+
+[component.comp3]
+source = "comp3/app.wasm"
+[component.comp3.build]
+command = "componentize-py -w spin-http componentize app -o app.wasm"
+workdir = "comp3"
+watch = ["*.py", "requirements.txt"]
