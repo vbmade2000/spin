@@ -1,2 +1,21 @@
 => Command to build and put in cargo path
  cargo install  --path . --features call-hook
+
+=> Abstraction details
+1. FactorsInstanceBuilder in crates/factors-executor/src/lib.rs has a function called "instantiate". This function is called to create instance of a component. If you run our own http example and hit the url, each time you hit the url this function is called.
+It manages the instantiation of the Spin component instance.
+
+2. FactorsExecutorApp in same file as above uses FactorsInstanceBuilder struct. It has a "prepare" method which takes component_id and returns instance builder for that component ID. This instance builder is FactorsInstanceBuilder. A FactorsExecutorApp represents a loaded Spin app, ready for instantiation.
+
+3. FactorsExecutor in same file as above uses FactorsExecutorApp struct. It manages the execution of the Spin app. It's "load_app" method returns FactorsExecutorApp struct.
+
+4. TriggerAppBuilder in crates/trigger/src/cli.rs has a function called "build". This "build" method uses FactorsExecutor. This function returns FactorsExecutorApp struct instance. It has run method that calls Trigger (HttpTrigger, RedisTrigger etc)'s "run" method and passes FactorsExecutorApp in trigger's "run" method.
+
+5. FactorsTriggerCommand in same file as above has a function called "run" that uses TriggerAppBuilder to run the app. It uses "run" method of TriggerAppBuilder.
+
+6. FactorsTriggerCommand is the one that handles CLI Command run. It is used by TriggerCommands enum in src/bin/spin.rs.
+
+
+Tasks
+Potential Solution: Use call_hook used in FactorsInstanceBuilder to calculate things.
+1. call_hook handler doesn't have identity for component. It doesn't know which component entered/exited the host and wasm. So first task is to get component id.
