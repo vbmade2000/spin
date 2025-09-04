@@ -2,7 +2,7 @@ mod store;
 
 use serde::Deserialize;
 use spin_factor_key_value::runtime_config::spin::MakeKeyValueStore;
-use store::KeyValueRedis;
+pub use store::KeyValueRedis;
 
 /// A key-value store that uses Redis as the backend.
 #[derive(Default)]
