@@ -87,36 +87,6 @@ impl OutboundHttpFactor {
     }
 }
 
-type HttpClient = Client<HttpConnector, HyperOutgoingBody>;
-type HttpsClient = Client<HttpsConnector, HyperOutgoingBody>;
-
-#[derive(Clone)]
-pub(super) struct HttpClients {
-    /// Used for non-TLS HTTP/1 connections.
-    http1: HttpClient,
-    /// Used for non-TLS HTTP/2 connections (e.g. when h2 prior knowledge is available).
-    http2: HttpClient,
-    /// Used for HTTP-over-TLS connections, using ALPN to negotiate the HTTP version.
-    https: HttpsClient,
-}
-
-impl HttpClients {
-    pub(super) fn new(enable_pooling: bool) -> Self {
-        let builder = move || {
-            let mut builder = Client::builder(TokioExecutor::new());
-            if !enable_pooling {
-                builder.pool_max_idle_per_host(0);
-            }
-            builder
-        };
-        Self {
-            http1: builder().build(HttpConnector),
-            http2: builder().http2_only(true).build(HttpConnector),
-            https: builder().build(HttpsConnector),
-        }
-    }
-}
-
 pub(crate) struct WasiHttpImplInner<'a> {
     state: &'a mut InstanceState,
     table: &'a mut ResourceTable,
@@ -172,189 +142,6 @@ struct RequestSender {
     http_clients: HttpClients,
 }
 
-#[derive(Clone)]
-struct ConnectOptions {
-    blocked_networks: BlockedNetworks,
-    connect_timeout: Duration,
-}
-
-// We must use task-local variables for these config options when using
-// `hyper_util::client::legacy::Client::request` because there's no way to plumb
-// them through as parameters.  Moreover, if there's already a pooled connection
-// ready, we'll reuse that and ignore these options anyway.
-tokio::task_local! {
-    static CONNECT_OPTIONS: ConnectOptions;
-    static TLS_CLIENT_CONFIG: TlsClientConfig;
-}
-
-async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String), ErrorCode> {
-    let authority_str = if let Some(authority) = uri.authority() {
-        if authority.port().is_some() {
-            authority.to_string()
-        } else {
-            format!("{authority}:{default_port}")
-        }
-    } else {
-        return Err(ErrorCode::HttpRequestUriInvalid);
-    };
-
-    let ConnectOptions {
-        blocked_networks,
-        connect_timeout,
-    } = CONNECT_OPTIONS.get();
-
-    let mut socket_addrs = tokio::net::lookup_host(&authority_str)
-        .await
-        .map_err(|_| dns_error("address not available".into(), 0))?
-        .collect::<Vec<_>>();
-
-    // Remove blocked IPs
-    let blocked_addrs = blocked_networks.remove_blocked(&mut socket_addrs);
-    if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
-        tracing::error!(
-            "error.type" = "destination_ip_prohibited",
-            ?blocked_addrs,
-            "all destination IP(s) prohibited by runtime config"
-        );
-        return Err(ErrorCode::DestinationIpProhibited);
-    }
-
-    Ok((
-        timeout(connect_timeout, TcpStream::connect(socket_addrs.as_slice()))
-            .await
-            .map_err(|_| ErrorCode::ConnectionTimeout)?
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::AddrNotAvailable => {
-                    dns_error("address not available".into(), 0)
-                }
-                _ => ErrorCode::ConnectionRefused,
-            })?,
-        authority_str,
-    ))
-}
-
-#[derive(Clone)]
-struct HttpConnector;
-
-impl HttpConnector {
-    async fn connect(uri: Uri) -> Result<TokioIo<TcpStream>, ErrorCode> {
-        Ok(TokioIo::new(connect_tcp(uri, 80).await?.0))
-    }
-}
-
-impl Service<Uri> for HttpConnector {
-    type Response = TokioIo<TcpStream>;
-    type Error = ErrorCode;
-    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<TcpStream>, ErrorCode>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, uri: Uri) -> Self::Future {
-        Box::pin(async move { Self::connect(uri).await })
-    }
-}
-
-struct RustlsStream(TlsStream<TcpStream>);
-
-impl Connection for RustlsStream {
-    fn connected(&self) -> Connected {
-        if self.0.get_ref().1.alpn_protocol() == Some(b"h2") {
-            self.0.get_ref().0.connected().negotiated_h2()
-        } else {
-            self.0.get_ref().0.connected()
-        }
-    }
-}
-
-impl AsyncRead for RustlsStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for RustlsStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
-    }
-
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.get_mut().0).poll_write_vectored(cx, bufs)
-    }
-
-    fn is_write_vectored(&self) -> bool {
-        self.0.is_write_vectored()
-    }
-}
-
-#[derive(Clone)]
-struct HttpsConnector;
-
-impl HttpsConnector {
-    async fn connect(uri: Uri) -> Result<TokioIo<RustlsStream>, ErrorCode> {
-        use rustls::pki_types::ServerName;
-
-        let (tcp_stream, authority_str) = connect_tcp(uri, 443).await?;
-
-        let mut tls_client_config = (*TLS_CLIENT_CONFIG.get()).clone();
-        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
-        let mut parts = authority_str.split(':');
-        let host = parts.next().unwrap_or(&authority_str);
-        let domain = ServerName::try_from(host)
-            .map_err(|e| {
-                tracing::warn!("dns lookup error: {e:?}");
-                dns_error("invalid dns name".to_string(), 0)
-            })?
-            .to_owned();
-        let stream = connector.connect(domain, tcp_stream).await.map_err(|e| {
-            tracing::warn!("tls protocol error: {e:?}");
-            ErrorCode::TlsProtocolError
-        })?;
-
-        Ok(TokioIo::new(RustlsStream(stream)))
-    }
-}
-
-impl Service<Uri> for HttpsConnector {
-    type Response = TokioIo<RustlsStream>;
-    type Error = ErrorCode;
-    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<RustlsStream>, ErrorCode>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, uri: Uri) -> Self::Future {
-        Box::pin(async move { Self::connect(uri).await })
-    }
-}
-
 impl RequestSender {
     async fn send(
         self,
@@ -367,6 +154,7 @@ impl RequestSender {
             first_byte_timeout,
             between_bytes_timeout,
         } = config;
+        let span = tracing::Span::current();
 
         // wasmtime-wasi-http fills in scheme and authority for relative URLs
         // (e.g. https://:443/<path>), which makes them hard to reason about.
@@ -382,7 +170,6 @@ impl RequestSender {
             }
             *uri = builder.build().unwrap();
         }
-        let span = tracing::Span::current();
         span.record("url.full", uri.to_string());
 
         spin_telemetry::inject_trace_context(&mut request);
@@ -505,6 +292,219 @@ impl RequestSender {
             worker: None,
             between_bytes_timeout,
         }))
+    }
+}
+
+type HttpClient = Client<HttpConnector, HyperOutgoingBody>;
+type HttpsClient = Client<HttpsConnector, HyperOutgoingBody>;
+
+#[derive(Clone)]
+pub(super) struct HttpClients {
+    /// Used for non-TLS HTTP/1 connections.
+    http1: HttpClient,
+    /// Used for non-TLS HTTP/2 connections (e.g. when h2 prior knowledge is available).
+    http2: HttpClient,
+    /// Used for HTTP-over-TLS connections, using ALPN to negotiate the HTTP version.
+    https: HttpsClient,
+}
+
+impl HttpClients {
+    pub(super) fn new(enable_pooling: bool) -> Self {
+        let builder = move || {
+            let mut builder = Client::builder(TokioExecutor::new());
+            if !enable_pooling {
+                builder.pool_max_idle_per_host(0);
+            }
+            builder
+        };
+        Self {
+            http1: builder().build(HttpConnector),
+            http2: builder().http2_only(true).build(HttpConnector),
+            https: builder().build(HttpsConnector),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ConnectOptions {
+    blocked_networks: BlockedNetworks,
+    connect_timeout: Duration,
+}
+
+// We must use task-local variables for these config options when using
+// `hyper_util::client::legacy::Client::request` because there's no way to plumb
+// them through as parameters.  Moreover, if there's already a pooled connection
+// ready, we'll reuse that and ignore these options anyway.
+tokio::task_local! {
+    static CONNECT_OPTIONS: ConnectOptions;
+    static TLS_CLIENT_CONFIG: TlsClientConfig;
+}
+
+async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String), ErrorCode> {
+    let authority_str = if let Some(authority) = uri.authority() {
+        if authority.port().is_some() {
+            authority.to_string()
+        } else {
+            format!("{authority}:{default_port}")
+        }
+    } else {
+        return Err(ErrorCode::HttpRequestUriInvalid);
+    };
+
+    let ConnectOptions {
+        blocked_networks,
+        connect_timeout,
+    } = CONNECT_OPTIONS.get();
+
+    let mut socket_addrs = tokio::net::lookup_host(&authority_str)
+        .await
+        .map_err(|_| dns_error("address not available".into(), 0))?
+        .collect::<Vec<_>>();
+
+    // Remove blocked IPs
+    let blocked_addrs = blocked_networks.remove_blocked(&mut socket_addrs);
+    if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
+        tracing::error!(
+            "error.type" = "destination_ip_prohibited",
+            ?blocked_addrs,
+            "all destination IP(s) prohibited by runtime config"
+        );
+        return Err(ErrorCode::DestinationIpProhibited);
+    }
+
+    Ok((
+        timeout(connect_timeout, TcpStream::connect(socket_addrs.as_slice()))
+            .await
+            .map_err(|_| ErrorCode::ConnectionTimeout)?
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::AddrNotAvailable => {
+                    dns_error("address not available".into(), 0)
+                }
+                _ => ErrorCode::ConnectionRefused,
+            })?,
+        authority_str,
+    ))
+}
+
+#[derive(Clone)]
+struct HttpConnector;
+
+impl HttpConnector {
+    async fn connect(uri: Uri) -> Result<TokioIo<TcpStream>, ErrorCode> {
+        Ok(TokioIo::new(connect_tcp(uri, 80).await?.0))
+    }
+}
+
+impl Service<Uri> for HttpConnector {
+    type Response = TokioIo<TcpStream>;
+    type Error = ErrorCode;
+    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<TcpStream>, ErrorCode>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        Box::pin(async move { Self::connect(uri).await })
+    }
+}
+
+#[derive(Clone)]
+struct HttpsConnector;
+
+impl HttpsConnector {
+    async fn connect(uri: Uri) -> Result<TokioIo<RustlsStream>, ErrorCode> {
+        use rustls::pki_types::ServerName;
+
+        let (tcp_stream, authority_str) = connect_tcp(uri, 443).await?;
+
+        let mut tls_client_config = (*TLS_CLIENT_CONFIG.get()).clone();
+        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
+        let mut parts = authority_str.split(':');
+        let host = parts.next().unwrap_or(&authority_str);
+        let domain = ServerName::try_from(host)
+            .map_err(|e| {
+                tracing::warn!("dns lookup error: {e:?}");
+                dns_error("invalid dns name".to_string(), 0)
+            })?
+            .to_owned();
+        let stream = connector.connect(domain, tcp_stream).await.map_err(|e| {
+            tracing::warn!("tls protocol error: {e:?}");
+            ErrorCode::TlsProtocolError
+        })?;
+
+        Ok(TokioIo::new(RustlsStream(stream)))
+    }
+}
+
+impl Service<Uri> for HttpsConnector {
+    type Response = TokioIo<RustlsStream>;
+    type Error = ErrorCode;
+    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<RustlsStream>, ErrorCode>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        Box::pin(async move { Self::connect(uri).await })
+    }
+}
+
+struct RustlsStream(TlsStream<TcpStream>);
+
+impl Connection for RustlsStream {
+    fn connected(&self) -> Connected {
+        if self.0.get_ref().1.alpn_protocol() == Some(b"h2") {
+            self.0.get_ref().0.connected().negotiated_h2()
+        } else {
+            self.0.get_ref().0.connected()
+        }
+    }
+}
+
+impl AsyncRead for RustlsStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for RustlsStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.get_mut().0).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.0.is_write_vectored()
     }
 }
 
