@@ -166,10 +166,12 @@ impl RequestSender {
         spin_telemetry::inject_trace_context(&mut request);
 
         // Run any configured request interceptor
+        let mut override_connect_host = None;
         if let Some(interceptor) = &self.request_interceptor {
             let intercept_request = std::mem::take(&mut request).into();
             match interceptor.intercept(intercept_request).await? {
-                InterceptOutcome::Continue(req) => {
+                InterceptOutcome::Continue(mut req) => {
+                    override_connect_host = req.override_connect_host.take();
                     request = req.into_hyper_request();
                 }
                 InterceptOutcome::Complete(resp) => {
@@ -186,13 +188,16 @@ impl RequestSender {
         // Backfill span fields after potentially updating the URL in the interceptor
         if let Some(authority) = request.uri().authority() {
             let span = tracing::Span::current();
-            span.record("server.address", authority.host());
+            let host = override_connect_host.as_deref().unwrap_or(authority.host());
+            span.record("server.address", host);
             if let Some(port) = authority.port() {
                 span.record("server.port", port.as_u16());
             }
         }
 
-        Ok(self.send_request(request, config).await?)
+        Ok(self
+            .send_request(request, config, override_connect_host)
+            .await?)
     }
 
     async fn prepare_request(
@@ -270,6 +275,7 @@ impl RequestSender {
         self,
         request: OutgoingRequest,
         config: OutgoingRequestConfig,
+        override_connect_host: Option<String>,
     ) -> Result<IncomingResponse, ErrorCode> {
         let OutgoingRequestConfig {
             use_tls,
@@ -290,6 +296,7 @@ impl RequestSender {
                 blocked_networks: self.blocked_networks,
                 connect_timeout,
                 tls_client_config,
+                override_connect_host,
             },
             async move {
                 if use_tls {
@@ -369,11 +376,16 @@ struct ConnectOptions {
     blocked_networks: BlockedNetworks,
     connect_timeout: Duration,
     tls_client_config: Option<TlsClientConfig>,
+    override_connect_host: Option<String>,
 }
 
 impl ConnectOptions {
     async fn connect_tcp(&self, uri: &Uri, default_port: u16) -> Result<TcpStream, ErrorCode> {
-        let host = uri.host().ok_or(ErrorCode::HttpRequestUriInvalid)?;
+        let host = self
+            .override_connect_host
+            .as_deref()
+            .or(uri.host())
+            .ok_or(ErrorCode::HttpRequestUriInvalid)?;
         let host_and_port = (host, uri.port_u16().unwrap_or(default_port));
 
         let mut socket_addrs = tokio::net::lookup_host(host_and_port)
