@@ -172,10 +172,8 @@ impl RequestSender {
         }
         span.record("url.full", uri.to_string());
 
+        // If the current span has opentelemetry trace context, inject it into the request
         spin_telemetry::inject_trace_context(&mut request);
-
-        let host = request.uri().host().unwrap_or_default();
-        let tls_client_config = self.component_tls_configs.get_client_config(host).clone();
 
         let is_self_request = request
             .uri()
@@ -243,34 +241,37 @@ impl RequestSender {
             }
         }
 
+        // Backfill span fields after potentially updating the URL in the interceptor
         let authority = request.uri().authority().context("authority not set")?;
         span.record("server.address", authority.host());
         if let Some(port) = authority.port() {
             span.record("server.port", port.as_u16());
         }
 
+        let tls_client_config = if use_tls {
+            let host = request.uri().host().unwrap_or_default();
+            Some(self.component_tls_configs.get_client_config(host).clone())
+        } else {
+            None
+        };
+
         let resp = CONNECT_OPTIONS.scope(
             ConnectOptions {
                 blocked_networks: self.blocked_networks,
                 connect_timeout,
+                tls_client_config,
             },
             async move {
                 if use_tls {
-                    TLS_CLIENT_CONFIG
-                        .scope(tls_client_config, async move {
-                            self.http_clients.https.request(request).await
-                        })
-                        .await
+                    self.http_clients.https.request(request).await
                 } else {
-                    let use_http2 = std::env::var_os("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE")
-                        .is_some_and(|v| {
-                            request
-                                .uri()
-                                .authority()
-                                .is_some_and(|authority| authority.as_str() == v)
-                        });
+                    // For development purposes, allow configuring plaintext HTTP/2 for a specific host.
+                    let h2c_prior_knowledge_host =
+                        std::env::var("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE").ok();
+                    let use_h2c = h2c_prior_knowledge_host.as_deref()
+                        == request.uri().authority().map(|a| a.as_str());
 
-                    if use_http2 {
+                    if use_h2c {
                         self.http_clients.http2.request(request).await
                     } else {
                         self.http_clients.http1.request(request).await
@@ -325,55 +326,43 @@ impl HttpClients {
     }
 }
 
-#[derive(Clone)]
-struct ConnectOptions {
-    blocked_networks: BlockedNetworks,
-    connect_timeout: Duration,
-}
-
 // We must use task-local variables for these config options when using
 // `hyper_util::client::legacy::Client::request` because there's no way to plumb
 // them through as parameters.  Moreover, if there's already a pooled connection
 // ready, we'll reuse that and ignore these options anyway.
 tokio::task_local! {
     static CONNECT_OPTIONS: ConnectOptions;
-    static TLS_CLIENT_CONFIG: TlsClientConfig;
 }
 
-async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String), ErrorCode> {
-    let authority_str = if let Some(authority) = uri.authority() {
-        if authority.port().is_some() {
-            authority.to_string()
-        } else {
-            format!("{authority}:{default_port}")
+#[derive(Clone)]
+struct ConnectOptions {
+    blocked_networks: BlockedNetworks,
+    connect_timeout: Duration,
+    tls_client_config: Option<TlsClientConfig>,
+}
+
+impl ConnectOptions {
+    async fn connect_tcp(&self, uri: &Uri, default_port: u16) -> Result<TcpStream, ErrorCode> {
+        let host = uri.host().ok_or(ErrorCode::HttpRequestUriInvalid)?;
+        let host_and_port = (host, uri.port_u16().unwrap_or(default_port));
+
+        let mut socket_addrs = tokio::net::lookup_host(host_and_port)
+            .await
+            .map_err(|_| dns_error("address not available".into(), 0))?
+            .collect::<Vec<_>>();
+
+        // Remove blocked IPs
+        let blocked_addrs = self.blocked_networks.remove_blocked(&mut socket_addrs);
+        if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
+            tracing::error!(
+                "error.type" = "destination_ip_prohibited",
+                ?blocked_addrs,
+                "all destination IP(s) prohibited by runtime config"
+            );
+            return Err(ErrorCode::DestinationIpProhibited);
         }
-    } else {
-        return Err(ErrorCode::HttpRequestUriInvalid);
-    };
 
-    let ConnectOptions {
-        blocked_networks,
-        connect_timeout,
-    } = CONNECT_OPTIONS.get();
-
-    let mut socket_addrs = tokio::net::lookup_host(&authority_str)
-        .await
-        .map_err(|_| dns_error("address not available".into(), 0))?
-        .collect::<Vec<_>>();
-
-    // Remove blocked IPs
-    let blocked_addrs = blocked_networks.remove_blocked(&mut socket_addrs);
-    if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
-        tracing::error!(
-            "error.type" = "destination_ip_prohibited",
-            ?blocked_addrs,
-            "all destination IP(s) prohibited by runtime config"
-        );
-        return Err(ErrorCode::DestinationIpProhibited);
-    }
-
-    Ok((
-        timeout(connect_timeout, TcpStream::connect(socket_addrs.as_slice()))
+        timeout(self.connect_timeout, TcpStream::connect(&*socket_addrs))
             .await
             .map_err(|_| ErrorCode::ConnectionTimeout)?
             .map_err(|err| match err.kind() {
@@ -381,9 +370,31 @@ async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String),
                     dns_error("address not available".into(), 0)
                 }
                 _ => ErrorCode::ConnectionRefused,
-            })?,
-        authority_str,
-    ))
+            })
+    }
+
+    async fn connect_tls(
+        &self,
+        uri: &Uri,
+        default_port: u16,
+    ) -> Result<TlsStream<TcpStream>, ErrorCode> {
+        let tcp_stream = self.connect_tcp(uri, default_port).await?;
+
+        let mut tls_client_config = self.tls_client_config.as_deref().unwrap().clone();
+        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
+        let domain = rustls::pki_types::ServerName::try_from(uri.host().unwrap())
+            .map_err(|e| {
+                tracing::warn!("dns lookup error: {e:?}");
+                dns_error("invalid dns name".to_string(), 0)
+            })?
+            .to_owned();
+        connector.connect(domain, tcp_stream).await.map_err(|e| {
+            tracing::warn!("tls protocol error: {e:?}");
+            ErrorCode::TlsProtocolError
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -391,7 +402,8 @@ struct HttpConnector;
 
 impl HttpConnector {
     async fn connect(uri: Uri) -> Result<TokioIo<TcpStream>, ErrorCode> {
-        Ok(TokioIo::new(connect_tcp(uri, 80).await?.0))
+        let stream = CONNECT_OPTIONS.get().connect_tcp(&uri, 80).await?;
+        Ok(TokioIo::new(stream))
     }
 }
 
@@ -414,27 +426,7 @@ struct HttpsConnector;
 
 impl HttpsConnector {
     async fn connect(uri: Uri) -> Result<TokioIo<RustlsStream>, ErrorCode> {
-        use rustls::pki_types::ServerName;
-
-        let (tcp_stream, authority_str) = connect_tcp(uri, 443).await?;
-
-        let mut tls_client_config = (*TLS_CLIENT_CONFIG.get()).clone();
-        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
-        let mut parts = authority_str.split(':');
-        let host = parts.next().unwrap_or(&authority_str);
-        let domain = ServerName::try_from(host)
-            .map_err(|e| {
-                tracing::warn!("dns lookup error: {e:?}");
-                dns_error("invalid dns name".to_string(), 0)
-            })?
-            .to_owned();
-        let stream = connector.connect(domain, tcp_stream).await.map_err(|e| {
-            tracing::warn!("tls protocol error: {e:?}");
-            ErrorCode::TlsProtocolError
-        })?;
-
+        let stream = CONNECT_OPTIONS.get().connect_tls(&uri, 443).await?;
         Ok(TokioIo::new(RustlsStream(stream)))
     }
 }
