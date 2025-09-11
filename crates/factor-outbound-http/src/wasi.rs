@@ -149,22 +149,27 @@ impl WasiHttpView for WasiHttpImplInner<'_> {
         request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
         config: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
+        let request_sender = RequestSender {
+            allowed_hosts: self.state.allowed_hosts.clone(),
+            component_tls_configs: self.state.component_tls_configs.clone(),
+            request_interceptor: self.state.request_interceptor.clone(),
+            self_request_origin: self.state.self_request_origin.clone(),
+            blocked_networks: self.state.blocked_networks.clone(),
+            http_clients: self.state.wasi_http_clients.clone(),
+        };
         Ok(HostFutureIncomingResponse::Pending(
-            wasmtime_wasi::runtime::spawn(
-                send_request_impl(
-                    request,
-                    config,
-                    self.state.allowed_hosts.clone(),
-                    self.state.component_tls_configs.clone(),
-                    self.state.request_interceptor.clone(),
-                    self.state.self_request_origin.clone(),
-                    self.state.blocked_networks.clone(),
-                    self.state.wasi_http_clients.clone(),
-                )
-                .in_current_span(),
-            ),
+            wasmtime_wasi::runtime::spawn(request_sender.send(request, config).in_current_span()),
         ))
     }
+}
+
+struct RequestSender {
+    allowed_hosts: OutboundAllowedHosts,
+    blocked_networks: BlockedNetworks,
+    component_tls_configs: ComponentTlsClientConfigs,
+    self_request_origin: Option<SelfRequestOrigin>,
+    request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
+    http_clients: HttpClients,
 }
 
 #[derive(Clone)]
@@ -350,172 +355,157 @@ impl Service<Uri> for HttpsConnector {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn send_request_impl(
-    mut request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-    mut config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    outbound_allowed_hosts: OutboundAllowedHosts,
-    component_tls_configs: ComponentTlsClientConfigs,
-    request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
-    self_request_origin: Option<SelfRequestOrigin>,
-    blocked_networks: BlockedNetworks,
-    http_clients: HttpClients,
-) -> anyhow::Result<Result<IncomingResponse, ErrorCode>> {
-    // wasmtime-wasi-http fills in scheme and authority for relative URLs
-    // (e.g. https://:443/<path>), which makes them hard to reason about.
-    // Undo that here.
-    let uri = request.uri_mut();
-    if uri
-        .authority()
-        .is_some_and(|authority| authority.host().is_empty())
-    {
-        let mut builder = http::uri::Builder::new();
-        if let Some(paq) = uri.path_and_query() {
-            builder = builder.path_and_query(paq.clone());
-        }
-        *uri = builder.build().unwrap();
-    }
-    let span = tracing::Span::current();
-    span.record("url.full", uri.to_string());
-
-    spin_telemetry::inject_trace_context(&mut request);
-
-    let host = request.uri().host().unwrap_or_default();
-    let tls_client_config = component_tls_configs.get_client_config(host).clone();
-
-    let is_self_request = request
-        .uri()
-        .authority()
-        .is_some_and(|a| a.host() == "self.alt");
-
-    if request.uri().authority().is_some() && !is_self_request {
-        // Absolute URI
-        let is_allowed = outbound_allowed_hosts
-            .check_url(&request.uri().to_string(), "https")
-            .await
-            .unwrap_or(false);
-        if !is_allowed {
-            return Ok(Err(ErrorCode::HttpRequestDenied));
-        }
-    } else {
-        // Relative URI ("self" request)
-        let is_allowed = outbound_allowed_hosts
-            .check_relative_url(&["http", "https"])
-            .await
-            .unwrap_or(false);
-        if !is_allowed {
-            return Ok(Err(ErrorCode::HttpRequestDenied));
-        }
-
-        let Some(origin) = self_request_origin else {
-            tracing::error!("Couldn't handle outbound HTTP request to relative URI; no origin set");
-            return Ok(Err(ErrorCode::HttpRequestUriInvalid));
-        };
-
-        config.use_tls = origin.use_tls();
-
-        request.headers_mut().insert(HOST, origin.host_header());
-
-        let path_and_query = request.uri().path_and_query().cloned();
-        *request.uri_mut() = origin.into_uri(path_and_query);
-    }
-
-    // Some servers (looking at you nginx) don't like a host header even though
-    // http/2 allows it: https://github.com/hyperium/hyper/issues/3298.
-    //
-    // Note that we do this _before_ invoking the request interceptor.  It may
-    // decide to add the `host` header back in, regardless of the nginx bug, in
-    // which case we'll let it do so without interferring.
-    request.headers_mut().remove(HOST);
-
-    if let Some(interceptor) = request_interceptor {
-        let intercept_request = std::mem::take(&mut request).into();
-        match interceptor.intercept(intercept_request).await? {
-            InterceptOutcome::Continue(req) => {
-                request = req.into_hyper_request();
-            }
-            InterceptOutcome::Complete(resp) => {
-                let resp = IncomingResponse {
-                    resp,
-                    worker: None,
-                    between_bytes_timeout: config.between_bytes_timeout,
-                };
-                return Ok(Ok(resp));
-            }
-        }
-    }
-
-    let authority = request.uri().authority().context("authority not set")?;
-    span.record("server.address", authority.host());
-    if let Some(port) = authority.port() {
-        span.record("server.port", port.as_u16());
-    }
-
-    Ok(send_request_handler(
-        request,
-        config,
-        tls_client_config,
-        blocked_networks,
-        http_clients,
-    )
-    .await)
-}
-
-async fn send_request_handler(
-    request: http::Request<HyperOutgoingBody>,
-    wasmtime_wasi_http::types::OutgoingRequestConfig {
-        use_tls,
-        connect_timeout,
-        first_byte_timeout,
-        between_bytes_timeout,
-    }: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    tls_client_config: TlsClientConfig,
-    blocked_networks: BlockedNetworks,
-    http_clients: HttpClients,
-) -> Result<wasmtime_wasi_http::types::IncomingResponse, ErrorCode> {
-    let resp = CONNECT_OPTIONS.scope(
-        ConnectOptions {
-            blocked_networks,
+impl RequestSender {
+    async fn send(
+        self,
+        mut request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
+    ) -> anyhow::Result<Result<IncomingResponse, ErrorCode>> {
+        let wasmtime_wasi_http::types::OutgoingRequestConfig {
+            mut use_tls,
             connect_timeout,
-        },
-        async move {
-            if use_tls {
-                TLS_CLIENT_CONFIG
-                    .scope(tls_client_config, async move {
-                        http_clients.https.request(request).await
-                    })
-                    .await
-            } else {
-                let use_http2 =
-                    std::env::var_os("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE").is_some_and(|v| {
-                        request
-                            .uri()
-                            .authority()
-                            .is_some_and(|authority| authority.as_str() == v)
-                    });
+            first_byte_timeout,
+            between_bytes_timeout,
+        } = config;
 
-                if use_http2 {
-                    http_clients.http2.request(request).await
-                } else {
-                    http_clients.http1.request(request).await
+        // wasmtime-wasi-http fills in scheme and authority for relative URLs
+        // (e.g. https://:443/<path>), which makes them hard to reason about.
+        // Undo that here.
+        let uri = request.uri_mut();
+        if uri
+            .authority()
+            .is_some_and(|authority| authority.host().is_empty())
+        {
+            let mut builder = http::uri::Builder::new();
+            if let Some(paq) = uri.path_and_query() {
+                builder = builder.path_and_query(paq.clone());
+            }
+            *uri = builder.build().unwrap();
+        }
+        let span = tracing::Span::current();
+        span.record("url.full", uri.to_string());
+
+        spin_telemetry::inject_trace_context(&mut request);
+
+        let host = request.uri().host().unwrap_or_default();
+        let tls_client_config = self.component_tls_configs.get_client_config(host).clone();
+
+        let is_self_request = request
+            .uri()
+            .authority()
+            .is_some_and(|a| a.host() == "self.alt");
+
+        if request.uri().authority().is_some() && !is_self_request {
+            // Absolute URI
+            let is_allowed = self
+                .allowed_hosts
+                .check_url(&request.uri().to_string(), "https")
+                .await
+                .unwrap_or(false);
+            if !is_allowed {
+                return Ok(Err(ErrorCode::HttpRequestDenied));
+            }
+        } else {
+            // Relative URI ("self" request)
+            let is_allowed = self
+                .allowed_hosts
+                .check_relative_url(&["http", "https"])
+                .await
+                .unwrap_or(false);
+            if !is_allowed {
+                return Ok(Err(ErrorCode::HttpRequestDenied));
+            }
+
+            let Some(origin) = self.self_request_origin else {
+                tracing::error!(
+                    "Couldn't handle outbound HTTP request to relative URI; no origin set"
+                );
+                return Ok(Err(ErrorCode::HttpRequestUriInvalid));
+            };
+
+            use_tls = origin.use_tls();
+
+            request.headers_mut().insert(HOST, origin.host_header());
+
+            let path_and_query = request.uri().path_and_query().cloned();
+            *request.uri_mut() = origin.into_uri(path_and_query);
+        }
+
+        // Some servers (looking at you nginx) don't like a host header even though
+        // http/2 allows it: https://github.com/hyperium/hyper/issues/3298.
+        //
+        // Note that we do this _before_ invoking the request interceptor.  It may
+        // decide to add the `host` header back in, regardless of the nginx bug, in
+        // which case we'll let it do so without interferring.
+        request.headers_mut().remove(HOST);
+
+        if let Some(interceptor) = self.request_interceptor {
+            let intercept_request = std::mem::take(&mut request).into();
+            match interceptor.intercept(intercept_request).await? {
+                InterceptOutcome::Continue(req) => {
+                    request = req.into_hyper_request();
+                }
+                InterceptOutcome::Complete(resp) => {
+                    let resp = IncomingResponse {
+                        resp,
+                        worker: None,
+                        between_bytes_timeout: config.between_bytes_timeout,
+                    };
+                    return Ok(Ok(resp));
                 }
             }
-        },
-    );
+        }
 
-    let resp = timeout(first_byte_timeout, resp)
-        .await
-        .map_err(|_| ErrorCode::ConnectionReadTimeout)?
-        .map_err(hyper_legacy_request_error)?
-        .map(|body| body.map_err(hyper_request_error).boxed());
+        let authority = request.uri().authority().context("authority not set")?;
+        span.record("server.address", authority.host());
+        if let Some(port) = authority.port() {
+            span.record("server.port", port.as_u16());
+        }
 
-    tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
+        let resp = CONNECT_OPTIONS.scope(
+            ConnectOptions {
+                blocked_networks: self.blocked_networks,
+                connect_timeout,
+            },
+            async move {
+                if use_tls {
+                    TLS_CLIENT_CONFIG
+                        .scope(tls_client_config, async move {
+                            self.http_clients.https.request(request).await
+                        })
+                        .await
+                } else {
+                    let use_http2 = std::env::var_os("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE")
+                        .is_some_and(|v| {
+                            request
+                                .uri()
+                                .authority()
+                                .is_some_and(|authority| authority.as_str() == v)
+                        });
 
-    Ok(wasmtime_wasi_http::types::IncomingResponse {
-        resp,
-        worker: None,
-        between_bytes_timeout,
-    })
+                    if use_http2 {
+                        self.http_clients.http2.request(request).await
+                    } else {
+                        self.http_clients.http1.request(request).await
+                    }
+                }
+            },
+        );
+
+        let resp = timeout(first_byte_timeout, resp)
+            .await
+            .map_err(|_| ErrorCode::ConnectionReadTimeout)?
+            .map_err(hyper_legacy_request_error)?
+            .map(|body| body.map_err(hyper_request_error).boxed());
+
+        tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
+
+        Ok(Ok(wasmtime_wasi_http::types::IncomingResponse {
+            resp,
+            worker: None,
+            between_bytes_timeout,
+        }))
+    }
 }
 
 /// Translate a [`hyper::Error`] to a wasi-http `ErrorCode` in the context of a request.
