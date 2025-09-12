@@ -4,12 +4,14 @@ use anyhow::bail;
 use http::{Request, Uri};
 use spin_common::{assert_matches, assert_not_matches};
 use spin_factor_outbound_http::{
+    intercept::{InterceptOutcome, InterceptRequest, OutboundHttpInterceptor},
     ErrorCode, HostFutureIncomingResponse, OutboundHttpFactor, SelfRequestOrigin,
 };
 use spin_factor_outbound_networking::OutboundNetworkingFactor;
 use spin_factor_variables::VariablesFactor;
 use spin_factors::{anyhow, RuntimeFactors};
 use spin_factors_test::{toml, TestEnvironment};
+use spin_world::async_trait;
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi_http::{types::OutgoingRequestConfig, WasiHttpView};
 
@@ -98,6 +100,34 @@ async fn disallowed_private_ips_fails() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn override_connect_host_disallowed_private_ip_fails() -> anyhow::Result<()> {
+    let mut state = test_instance_state("http://*", false).await?;
+    state.http.set_request_interceptor({
+        struct Interceptor;
+        #[async_trait]
+        impl OutboundHttpInterceptor for Interceptor {
+            async fn intercept(
+                &self,
+                mut request: InterceptRequest,
+            ) -> wasmtime_wasi_http::HttpResult<InterceptOutcome> {
+                request.override_connect_host("localhost");
+                Ok(InterceptOutcome::Continue(request))
+            }
+        }
+        Interceptor
+    })?;
+    let mut wasi_http = OutboundHttpFactor::get_wasi_http_impl(&mut state).unwrap();
+    let req = Request::get("http://1.1.1.1").body(Default::default())?;
+    let mut future_resp = wasi_http.send_request(req, test_request_config())?;
+    future_resp.ready().await;
+    assert_matches!(
+        future_resp.unwrap_ready().unwrap(),
+        Err(ErrorCode::DestinationIpProhibited),
+    );
+    Ok(())
+}
+
 async fn test_instance_state(
     allowed_outbound_hosts: &str,
     allow_private_ips: bool,
@@ -128,9 +158,9 @@ async fn test_instance_state(
 fn test_request_config() -> OutgoingRequestConfig {
     OutgoingRequestConfig {
         use_tls: false,
-        connect_timeout: Duration::from_millis(1),
-        first_byte_timeout: Duration::from_millis(1),
-        between_bytes_timeout: Duration::from_millis(1),
+        connect_timeout: Duration::from_millis(10),
+        first_byte_timeout: Duration::from_millis(10),
+        between_bytes_timeout: Duration::from_millis(10),
     }
 }
 
