@@ -378,8 +378,12 @@ impl ConnectOptions {
 
         let mut socket_addrs = tokio::net::lookup_host(host_and_port)
             .await
-            .map_err(|_| dns_error("address not available".into(), 0))?
+            .map_err(|err| {
+                tracing::debug!(?host_and_port, ?err, "Error resolving host");
+                dns_error("address not available".into(), 0)
+            })?
             .collect::<Vec<_>>();
+        tracing::debug!(?host_and_port, ?socket_addrs, "Resolved host");
 
         // Remove blocked IPs
         let blocked_addrs = self.blocked_networks.remove_blocked(&mut socket_addrs);
