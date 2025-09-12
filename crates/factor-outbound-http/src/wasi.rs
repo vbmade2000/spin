@@ -8,8 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
-use http::{header::HOST, Request, Uri};
+use http::{header::HOST, Uri};
 use http_body_util::BodyExt;
 use hyper_util::{
     client::legacy::{
@@ -35,8 +34,8 @@ use wasmtime::component::HasData;
 use wasmtime_wasi_http::{
     bindings::http::types::ErrorCode,
     body::HyperOutgoingBody,
-    types::{HostFutureIncomingResponse, IncomingResponse},
-    WasiHttpCtx, WasiHttpImpl, WasiHttpView,
+    types::{HostFutureIncomingResponse, IncomingResponse, OutgoingRequestConfig},
+    HttpError, WasiHttpCtx, WasiHttpImpl, WasiHttpView,
 };
 
 use crate::{
@@ -92,6 +91,8 @@ pub(crate) struct WasiHttpImplInner<'a> {
     table: &'a mut ResourceTable,
 }
 
+type OutgoingRequest = http::Request<HyperOutgoingBody>;
+
 impl WasiHttpView for WasiHttpImplInner<'_> {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.state.wasi_http_ctx
@@ -116,9 +117,9 @@ impl WasiHttpView for WasiHttpImplInner<'_> {
     )]
     fn send_request(
         &mut self,
-        request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
+        request: OutgoingRequest,
+        config: OutgoingRequestConfig,
+    ) -> Result<wasmtime_wasi_http::types::HostFutureIncomingResponse, HttpError> {
         let request_sender = RequestSender {
             allowed_hosts: self.state.allowed_hosts.clone(),
             component_tls_configs: self.state.component_tls_configs.clone(),
@@ -128,7 +129,18 @@ impl WasiHttpView for WasiHttpImplInner<'_> {
             http_clients: self.state.wasi_http_clients.clone(),
         };
         Ok(HostFutureIncomingResponse::Pending(
-            wasmtime_wasi::runtime::spawn(request_sender.send(request, config).in_current_span()),
+            wasmtime_wasi::runtime::spawn(
+                async {
+                    match request_sender.send(request, config).await {
+                        Ok(resp) => Ok(Ok(resp)),
+                        Err(http_error) => match http_error.downcast() {
+                            Ok(error_code) => Ok(Err(error_code)),
+                            Err(trap) => Err(trap),
+                        },
+                    }
+                }
+                .in_current_span(),
+            ),
         ))
     }
 }
@@ -145,17 +157,49 @@ struct RequestSender {
 impl RequestSender {
     async fn send(
         self,
-        mut request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    ) -> anyhow::Result<Result<IncomingResponse, ErrorCode>> {
-        let wasmtime_wasi_http::types::OutgoingRequestConfig {
-            mut use_tls,
-            connect_timeout,
-            first_byte_timeout,
-            between_bytes_timeout,
-        } = config;
-        let span = tracing::Span::current();
+        mut request: OutgoingRequest,
+        mut config: OutgoingRequestConfig,
+    ) -> Result<IncomingResponse, HttpError> {
+        self.prepare_request(&mut request, &mut config).await?;
 
+        // If the current span has opentelemetry trace context, inject it into the request
+        spin_telemetry::inject_trace_context(&mut request);
+
+        // Run any configured request interceptor
+        if let Some(interceptor) = &self.request_interceptor {
+            let intercept_request = std::mem::take(&mut request).into();
+            match interceptor.intercept(intercept_request).await? {
+                InterceptOutcome::Continue(req) => {
+                    request = req.into_hyper_request();
+                }
+                InterceptOutcome::Complete(resp) => {
+                    let resp = IncomingResponse {
+                        resp,
+                        worker: None,
+                        between_bytes_timeout: config.between_bytes_timeout,
+                    };
+                    return Ok(resp);
+                }
+            }
+        }
+
+        // Backfill span fields after potentially updating the URL in the interceptor
+        if let Some(authority) = request.uri().authority() {
+            let span = tracing::Span::current();
+            span.record("server.address", authority.host());
+            if let Some(port) = authority.port() {
+                span.record("server.port", port.as_u16());
+            }
+        }
+
+        Ok(self.send_request(request, config).await?)
+    }
+
+    async fn prepare_request(
+        &self,
+        request: &mut OutgoingRequest,
+        config: &mut OutgoingRequestConfig,
+    ) -> Result<(), ErrorCode> {
         // wasmtime-wasi-http fills in scheme and authority for relative URLs
         // (e.g. https://:443/<path>), which makes them hard to reason about.
         // Undo that here.
@@ -170,50 +214,46 @@ impl RequestSender {
             }
             *uri = builder.build().unwrap();
         }
-        span.record("url.full", uri.to_string());
+        tracing::Span::current().record("url.full", uri.to_string());
 
-        // If the current span has opentelemetry trace context, inject it into the request
-        spin_telemetry::inject_trace_context(&mut request);
+        let is_self_request = match request.uri().authority() {
+            // Some SDKs require an authority, so we support e.g. http://self.alt/self-request
+            Some(authority) => authority.host() == "self.alt",
+            // Otherwise self requests have no authority
+            None => true,
+        };
 
-        let is_self_request = request
-            .uri()
-            .authority()
-            .is_some_and(|a| a.host() == "self.alt");
-
-        if request.uri().authority().is_some() && !is_self_request {
-            // Absolute URI
-            let is_allowed = self
-                .allowed_hosts
-                .check_url(&request.uri().to_string(), "https")
-                .await
-                .unwrap_or(false);
-            if !is_allowed {
-                return Ok(Err(ErrorCode::HttpRequestDenied));
-            }
-        } else {
-            // Relative URI ("self" request)
-            let is_allowed = self
-                .allowed_hosts
+        // Enforce allowed_outbound_hosts
+        let is_allowed = if is_self_request {
+            self.allowed_hosts
                 .check_relative_url(&["http", "https"])
                 .await
-                .unwrap_or(false);
-            if !is_allowed {
-                return Ok(Err(ErrorCode::HttpRequestDenied));
-            }
+                .unwrap_or(false)
+        } else {
+            self.allowed_hosts
+                .check_url(&request.uri().to_string(), "https")
+                .await
+                .unwrap_or(false)
+        };
+        if !is_allowed {
+            return Err(ErrorCode::HttpRequestDenied);
+        }
 
-            let Some(origin) = self.self_request_origin else {
+        if is_self_request {
+            // Replace the authority with the "self request origin"
+            let Some(origin) = self.self_request_origin.as_ref() else {
                 tracing::error!(
                     "Couldn't handle outbound HTTP request to relative URI; no origin set"
                 );
-                return Ok(Err(ErrorCode::HttpRequestUriInvalid));
+                return Err(ErrorCode::HttpRequestUriInvalid);
             };
 
-            use_tls = origin.use_tls();
+            config.use_tls = origin.use_tls();
 
             request.headers_mut().insert(HOST, origin.host_header());
 
             let path_and_query = request.uri().path_and_query().cloned();
-            *request.uri_mut() = origin.into_uri(path_and_query);
+            *request.uri_mut() = origin.clone().into_uri(path_and_query);
         }
 
         // Some servers (looking at you nginx) don't like a host header even though
@@ -223,30 +263,20 @@ impl RequestSender {
         // decide to add the `host` header back in, regardless of the nginx bug, in
         // which case we'll let it do so without interferring.
         request.headers_mut().remove(HOST);
+        Ok(())
+    }
 
-        if let Some(interceptor) = self.request_interceptor {
-            let intercept_request = std::mem::take(&mut request).into();
-            match interceptor.intercept(intercept_request).await? {
-                InterceptOutcome::Continue(req) => {
-                    request = req.into_hyper_request();
-                }
-                InterceptOutcome::Complete(resp) => {
-                    let resp = IncomingResponse {
-                        resp,
-                        worker: None,
-                        between_bytes_timeout: config.between_bytes_timeout,
-                    };
-                    return Ok(Ok(resp));
-                }
-            }
-        }
-
-        // Backfill span fields after potentially updating the URL in the interceptor
-        let authority = request.uri().authority().context("authority not set")?;
-        span.record("server.address", authority.host());
-        if let Some(port) = authority.port() {
-            span.record("server.port", port.as_u16());
-        }
+    async fn send_request(
+        self,
+        request: OutgoingRequest,
+        config: OutgoingRequestConfig,
+    ) -> Result<IncomingResponse, ErrorCode> {
+        let OutgoingRequestConfig {
+            use_tls,
+            connect_timeout,
+            first_byte_timeout,
+            between_bytes_timeout,
+        } = config;
 
         let tls_client_config = if use_tls {
             let host = request.uri().host().unwrap_or_default();
@@ -288,11 +318,11 @@ impl RequestSender {
 
         tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
 
-        Ok(Ok(wasmtime_wasi_http::types::IncomingResponse {
+        Ok(IncomingResponse {
             resp,
             worker: None,
             between_bytes_timeout,
-        }))
+        })
     }
 }
 
