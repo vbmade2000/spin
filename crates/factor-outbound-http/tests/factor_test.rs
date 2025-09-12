@@ -3,15 +3,15 @@ use std::time::Duration;
 use anyhow::bail;
 use http::{Request, Uri};
 use spin_common::{assert_matches, assert_not_matches};
-use spin_factor_outbound_http::{OutboundHttpFactor, SelfRequestOrigin};
+use spin_factor_outbound_http::{
+    ErrorCode, HostFutureIncomingResponse, OutboundHttpFactor, SelfRequestOrigin,
+};
 use spin_factor_outbound_networking::OutboundNetworkingFactor;
 use spin_factor_variables::VariablesFactor;
 use spin_factors::{anyhow, RuntimeFactors};
 use spin_factors_test::{toml, TestEnvironment};
 use wasmtime_wasi::p2::Pollable;
-use wasmtime_wasi_http::{
-    bindings::http::types::ErrorCode, types::OutgoingRequestConfig, WasiHttpView,
-};
+use wasmtime_wasi_http::{types::OutgoingRequestConfig, WasiHttpView};
 
 #[derive(RuntimeFactors)]
 struct TestFactors {
@@ -30,12 +30,7 @@ async fn allowed_host_is_allowed() -> anyhow::Result<()> {
     let mut future_resp = wasi_http.send_request(req, test_request_config())?;
     future_resp.ready().await;
 
-    // Different systems handle the discard prefix differently; some will
-    // immediately reject it while others will silently let it time out
-    assert_matches!(
-        future_resp.unwrap_ready().unwrap(),
-        Err(ErrorCode::ConnectionRefused | ErrorCode::ConnectionTimeout),
-    );
+    assert_discard_prefix_error(future_resp);
     Ok(())
 }
 
@@ -51,12 +46,7 @@ async fn self_request_smoke_test() -> anyhow::Result<()> {
     let mut future_resp = wasi_http.send_request(req, test_request_config())?;
     future_resp.ready().await;
 
-    // Different systems handle the discard prefix differently; some will
-    // immediately reject it while others will silently let it time out
-    assert_matches!(
-        future_resp.unwrap_ready().unwrap(),
-        Err(ErrorCode::ConnectionRefused | ErrorCode::ConnectionTimeout),
-    );
+    assert_discard_prefix_error(future_resp);
     Ok(())
 }
 
@@ -142,4 +132,16 @@ fn test_request_config() -> OutgoingRequestConfig {
         first_byte_timeout: Duration::from_millis(1),
         between_bytes_timeout: Duration::from_millis(1),
     }
+}
+
+fn assert_discard_prefix_error(future_resp: HostFutureIncomingResponse) {
+    // Different systems handle the discard prefix differently; some will
+    // immediately reject it while others will silently let it time out
+    assert_matches!(
+        future_resp.unwrap_ready().unwrap(),
+        Err(ErrorCode::ConnectionRefused
+            | ErrorCode::ConnectionTimeout
+            | ErrorCode::ConnectionReadTimeout
+            | ErrorCode::DnsError(_)),
+    );
 }

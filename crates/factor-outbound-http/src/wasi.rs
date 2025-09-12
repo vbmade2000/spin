@@ -8,8 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
-use http::{header::HOST, Request, Uri};
+use http::{header::HOST, Uri};
 use http_body_util::BodyExt;
 use hyper_util::{
     client::legacy::{
@@ -35,8 +34,8 @@ use wasmtime::component::HasData;
 use wasmtime_wasi_http::{
     bindings::http::types::ErrorCode,
     body::HyperOutgoingBody,
-    types::{HostFutureIncomingResponse, IncomingResponse},
-    WasiHttpCtx, WasiHttpImpl, WasiHttpView,
+    types::{HostFutureIncomingResponse, IncomingResponse, OutgoingRequestConfig},
+    HttpError, WasiHttpCtx, WasiHttpImpl, WasiHttpView,
 };
 
 use crate::{
@@ -87,6 +86,246 @@ impl OutboundHttpFactor {
     }
 }
 
+pub(crate) struct WasiHttpImplInner<'a> {
+    state: &'a mut InstanceState,
+    table: &'a mut ResourceTable,
+}
+
+type OutgoingRequest = http::Request<HyperOutgoingBody>;
+
+impl WasiHttpView for WasiHttpImplInner<'_> {
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.state.wasi_http_ctx
+    }
+
+    fn table(&mut self) -> &mut ResourceTable {
+        self.table
+    }
+
+    #[instrument(
+        name = "spin_outbound_http.send_request",
+        skip_all,
+        fields(
+            otel.kind = "client",
+            url.full = Empty,
+            http.request.method = %request.method(),
+            otel.name = %request.method(),
+            http.response.status_code = Empty,
+            server.address = Empty,
+            server.port = Empty,
+        ),
+    )]
+    fn send_request(
+        &mut self,
+        request: OutgoingRequest,
+        config: OutgoingRequestConfig,
+    ) -> Result<wasmtime_wasi_http::types::HostFutureIncomingResponse, HttpError> {
+        let request_sender = RequestSender {
+            allowed_hosts: self.state.allowed_hosts.clone(),
+            component_tls_configs: self.state.component_tls_configs.clone(),
+            request_interceptor: self.state.request_interceptor.clone(),
+            self_request_origin: self.state.self_request_origin.clone(),
+            blocked_networks: self.state.blocked_networks.clone(),
+            http_clients: self.state.wasi_http_clients.clone(),
+        };
+        Ok(HostFutureIncomingResponse::Pending(
+            wasmtime_wasi::runtime::spawn(
+                async {
+                    match request_sender.send(request, config).await {
+                        Ok(resp) => Ok(Ok(resp)),
+                        Err(http_error) => match http_error.downcast() {
+                            Ok(error_code) => Ok(Err(error_code)),
+                            Err(trap) => Err(trap),
+                        },
+                    }
+                }
+                .in_current_span(),
+            ),
+        ))
+    }
+}
+
+struct RequestSender {
+    allowed_hosts: OutboundAllowedHosts,
+    blocked_networks: BlockedNetworks,
+    component_tls_configs: ComponentTlsClientConfigs,
+    self_request_origin: Option<SelfRequestOrigin>,
+    request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
+    http_clients: HttpClients,
+}
+
+impl RequestSender {
+    async fn send(
+        self,
+        mut request: OutgoingRequest,
+        mut config: OutgoingRequestConfig,
+    ) -> Result<IncomingResponse, HttpError> {
+        self.prepare_request(&mut request, &mut config).await?;
+
+        // If the current span has opentelemetry trace context, inject it into the request
+        spin_telemetry::inject_trace_context(&mut request);
+
+        // Run any configured request interceptor
+        if let Some(interceptor) = &self.request_interceptor {
+            let intercept_request = std::mem::take(&mut request).into();
+            match interceptor.intercept(intercept_request).await? {
+                InterceptOutcome::Continue(req) => {
+                    request = req.into_hyper_request();
+                }
+                InterceptOutcome::Complete(resp) => {
+                    let resp = IncomingResponse {
+                        resp,
+                        worker: None,
+                        between_bytes_timeout: config.between_bytes_timeout,
+                    };
+                    return Ok(resp);
+                }
+            }
+        }
+
+        // Backfill span fields after potentially updating the URL in the interceptor
+        if let Some(authority) = request.uri().authority() {
+            let span = tracing::Span::current();
+            span.record("server.address", authority.host());
+            if let Some(port) = authority.port() {
+                span.record("server.port", port.as_u16());
+            }
+        }
+
+        Ok(self.send_request(request, config).await?)
+    }
+
+    async fn prepare_request(
+        &self,
+        request: &mut OutgoingRequest,
+        config: &mut OutgoingRequestConfig,
+    ) -> Result<(), ErrorCode> {
+        // wasmtime-wasi-http fills in scheme and authority for relative URLs
+        // (e.g. https://:443/<path>), which makes them hard to reason about.
+        // Undo that here.
+        let uri = request.uri_mut();
+        if uri
+            .authority()
+            .is_some_and(|authority| authority.host().is_empty())
+        {
+            let mut builder = http::uri::Builder::new();
+            if let Some(paq) = uri.path_and_query() {
+                builder = builder.path_and_query(paq.clone());
+            }
+            *uri = builder.build().unwrap();
+        }
+        tracing::Span::current().record("url.full", uri.to_string());
+
+        let is_self_request = match request.uri().authority() {
+            // Some SDKs require an authority, so we support e.g. http://self.alt/self-request
+            Some(authority) => authority.host() == "self.alt",
+            // Otherwise self requests have no authority
+            None => true,
+        };
+
+        // Enforce allowed_outbound_hosts
+        let is_allowed = if is_self_request {
+            self.allowed_hosts
+                .check_relative_url(&["http", "https"])
+                .await
+                .unwrap_or(false)
+        } else {
+            self.allowed_hosts
+                .check_url(&request.uri().to_string(), "https")
+                .await
+                .unwrap_or(false)
+        };
+        if !is_allowed {
+            return Err(ErrorCode::HttpRequestDenied);
+        }
+
+        if is_self_request {
+            // Replace the authority with the "self request origin"
+            let Some(origin) = self.self_request_origin.as_ref() else {
+                tracing::error!(
+                    "Couldn't handle outbound HTTP request to relative URI; no origin set"
+                );
+                return Err(ErrorCode::HttpRequestUriInvalid);
+            };
+
+            config.use_tls = origin.use_tls();
+
+            request.headers_mut().insert(HOST, origin.host_header());
+
+            let path_and_query = request.uri().path_and_query().cloned();
+            *request.uri_mut() = origin.clone().into_uri(path_and_query);
+        }
+
+        // Some servers (looking at you nginx) don't like a host header even though
+        // http/2 allows it: https://github.com/hyperium/hyper/issues/3298.
+        //
+        // Note that we do this _before_ invoking the request interceptor.  It may
+        // decide to add the `host` header back in, regardless of the nginx bug, in
+        // which case we'll let it do so without interferring.
+        request.headers_mut().remove(HOST);
+        Ok(())
+    }
+
+    async fn send_request(
+        self,
+        request: OutgoingRequest,
+        config: OutgoingRequestConfig,
+    ) -> Result<IncomingResponse, ErrorCode> {
+        let OutgoingRequestConfig {
+            use_tls,
+            connect_timeout,
+            first_byte_timeout,
+            between_bytes_timeout,
+        } = config;
+
+        let tls_client_config = if use_tls {
+            let host = request.uri().host().unwrap_or_default();
+            Some(self.component_tls_configs.get_client_config(host).clone())
+        } else {
+            None
+        };
+
+        let resp = CONNECT_OPTIONS.scope(
+            ConnectOptions {
+                blocked_networks: self.blocked_networks,
+                connect_timeout,
+                tls_client_config,
+            },
+            async move {
+                if use_tls {
+                    self.http_clients.https.request(request).await
+                } else {
+                    // For development purposes, allow configuring plaintext HTTP/2 for a specific host.
+                    let h2c_prior_knowledge_host =
+                        std::env::var("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE").ok();
+                    let use_h2c = h2c_prior_knowledge_host.as_deref()
+                        == request.uri().authority().map(|a| a.as_str());
+
+                    if use_h2c {
+                        self.http_clients.http2.request(request).await
+                    } else {
+                        self.http_clients.http1.request(request).await
+                    }
+                }
+            },
+        );
+
+        let resp = timeout(first_byte_timeout, resp)
+            .await
+            .map_err(|_| ErrorCode::ConnectionReadTimeout)?
+            .map_err(hyper_legacy_request_error)?
+            .map(|body| body.map_err(hyper_request_error).boxed());
+
+        tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
+
+        Ok(IncomingResponse {
+            resp,
+            worker: None,
+            between_bytes_timeout,
+        })
+    }
+}
+
 type HttpClient = Client<HttpConnector, HyperOutgoingBody>;
 type HttpsClient = Client<HttpsConnector, HyperOutgoingBody>;
 
@@ -117,105 +356,47 @@ impl HttpClients {
     }
 }
 
-pub(crate) struct WasiHttpImplInner<'a> {
-    state: &'a mut InstanceState,
-    table: &'a mut ResourceTable,
-}
-
-impl WasiHttpView for WasiHttpImplInner<'_> {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.state.wasi_http_ctx
-    }
-
-    fn table(&mut self) -> &mut ResourceTable {
-        self.table
-    }
-
-    #[instrument(
-        name = "spin_outbound_http.send_request",
-        skip_all,
-        fields(
-            otel.kind = "client",
-            url.full = Empty,
-            http.request.method = %request.method(),
-            otel.name = %request.method(),
-            http.response.status_code = Empty,
-            server.address = Empty,
-            server.port = Empty,
-        ),
-    )]
-    fn send_request(
-        &mut self,
-        request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    ) -> wasmtime_wasi_http::HttpResult<wasmtime_wasi_http::types::HostFutureIncomingResponse> {
-        Ok(HostFutureIncomingResponse::Pending(
-            wasmtime_wasi::runtime::spawn(
-                send_request_impl(
-                    request,
-                    config,
-                    self.state.allowed_hosts.clone(),
-                    self.state.component_tls_configs.clone(),
-                    self.state.request_interceptor.clone(),
-                    self.state.self_request_origin.clone(),
-                    self.state.blocked_networks.clone(),
-                    self.state.wasi_http_clients.clone(),
-                )
-                .in_current_span(),
-            ),
-        ))
-    }
-}
-
-#[derive(Clone)]
-struct ConnectOptions {
-    blocked_networks: BlockedNetworks,
-    connect_timeout: Duration,
-}
-
 // We must use task-local variables for these config options when using
 // `hyper_util::client::legacy::Client::request` because there's no way to plumb
 // them through as parameters.  Moreover, if there's already a pooled connection
 // ready, we'll reuse that and ignore these options anyway.
 tokio::task_local! {
     static CONNECT_OPTIONS: ConnectOptions;
-    static TLS_CLIENT_CONFIG: TlsClientConfig;
 }
 
-async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String), ErrorCode> {
-    let authority_str = if let Some(authority) = uri.authority() {
-        if authority.port().is_some() {
-            authority.to_string()
-        } else {
-            format!("{authority}:{default_port}")
+#[derive(Clone)]
+struct ConnectOptions {
+    blocked_networks: BlockedNetworks,
+    connect_timeout: Duration,
+    tls_client_config: Option<TlsClientConfig>,
+}
+
+impl ConnectOptions {
+    async fn connect_tcp(&self, uri: &Uri, default_port: u16) -> Result<TcpStream, ErrorCode> {
+        let host = uri.host().ok_or(ErrorCode::HttpRequestUriInvalid)?;
+        let host_and_port = (host, uri.port_u16().unwrap_or(default_port));
+
+        let mut socket_addrs = tokio::net::lookup_host(host_and_port)
+            .await
+            .map_err(|err| {
+                tracing::debug!(?host_and_port, ?err, "Error resolving host");
+                dns_error("address not available".into(), 0)
+            })?
+            .collect::<Vec<_>>();
+        tracing::debug!(?host_and_port, ?socket_addrs, "Resolved host");
+
+        // Remove blocked IPs
+        let blocked_addrs = self.blocked_networks.remove_blocked(&mut socket_addrs);
+        if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
+            tracing::error!(
+                "error.type" = "destination_ip_prohibited",
+                ?blocked_addrs,
+                "all destination IP(s) prohibited by runtime config"
+            );
+            return Err(ErrorCode::DestinationIpProhibited);
         }
-    } else {
-        return Err(ErrorCode::HttpRequestUriInvalid);
-    };
 
-    let ConnectOptions {
-        blocked_networks,
-        connect_timeout,
-    } = CONNECT_OPTIONS.get();
-
-    let mut socket_addrs = tokio::net::lookup_host(&authority_str)
-        .await
-        .map_err(|_| dns_error("address not available".into(), 0))?
-        .collect::<Vec<_>>();
-
-    // Remove blocked IPs
-    let blocked_addrs = blocked_networks.remove_blocked(&mut socket_addrs);
-    if socket_addrs.is_empty() && !blocked_addrs.is_empty() {
-        tracing::error!(
-            "error.type" = "destination_ip_prohibited",
-            ?blocked_addrs,
-            "all destination IP(s) prohibited by runtime config"
-        );
-        return Err(ErrorCode::DestinationIpProhibited);
-    }
-
-    Ok((
-        timeout(connect_timeout, TcpStream::connect(socket_addrs.as_slice()))
+        timeout(self.connect_timeout, TcpStream::connect(&*socket_addrs))
             .await
             .map_err(|_| ErrorCode::ConnectionTimeout)?
             .map_err(|err| match err.kind() {
@@ -223,9 +404,31 @@ async fn connect_tcp(uri: Uri, default_port: u16) -> Result<(TcpStream, String),
                     dns_error("address not available".into(), 0)
                 }
                 _ => ErrorCode::ConnectionRefused,
-            })?,
-        authority_str,
-    ))
+            })
+    }
+
+    async fn connect_tls(
+        &self,
+        uri: &Uri,
+        default_port: u16,
+    ) -> Result<TlsStream<TcpStream>, ErrorCode> {
+        let tcp_stream = self.connect_tcp(uri, default_port).await?;
+
+        let mut tls_client_config = self.tls_client_config.as_deref().unwrap().clone();
+        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
+        let domain = rustls::pki_types::ServerName::try_from(uri.host().unwrap())
+            .map_err(|e| {
+                tracing::warn!("dns lookup error: {e:?}");
+                dns_error("invalid dns name".to_string(), 0)
+            })?
+            .to_owned();
+        connector.connect(domain, tcp_stream).await.map_err(|e| {
+            tracing::warn!("tls protocol error: {e:?}");
+            ErrorCode::TlsProtocolError
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -233,7 +436,8 @@ struct HttpConnector;
 
 impl HttpConnector {
     async fn connect(uri: Uri) -> Result<TokioIo<TcpStream>, ErrorCode> {
-        Ok(TokioIo::new(connect_tcp(uri, 80).await?.0))
+        let stream = CONNECT_OPTIONS.get().connect_tcp(&uri, 80).await?;
+        Ok(TokioIo::new(stream))
     }
 }
 
@@ -241,6 +445,30 @@ impl Service<Uri> for HttpConnector {
     type Response = TokioIo<TcpStream>;
     type Error = ErrorCode;
     type Future = Pin<Box<dyn Future<Output = Result<TokioIo<TcpStream>, ErrorCode>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        Box::pin(async move { Self::connect(uri).await })
+    }
+}
+
+#[derive(Clone)]
+struct HttpsConnector;
+
+impl HttpsConnector {
+    async fn connect(uri: Uri) -> Result<TokioIo<RustlsStream>, ErrorCode> {
+        let stream = CONNECT_OPTIONS.get().connect_tls(&uri, 443).await?;
+        Ok(TokioIo::new(RustlsStream(stream)))
+    }
+}
+
+impl Service<Uri> for HttpsConnector {
+    type Response = TokioIo<RustlsStream>;
+    type Error = ErrorCode;
+    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<RustlsStream>, ErrorCode>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -304,218 +532,6 @@ impl AsyncWrite for RustlsStream {
     fn is_write_vectored(&self) -> bool {
         self.0.is_write_vectored()
     }
-}
-
-#[derive(Clone)]
-struct HttpsConnector;
-
-impl HttpsConnector {
-    async fn connect(uri: Uri) -> Result<TokioIo<RustlsStream>, ErrorCode> {
-        use rustls::pki_types::ServerName;
-
-        let (tcp_stream, authority_str) = connect_tcp(uri, 443).await?;
-
-        let mut tls_client_config = (*TLS_CLIENT_CONFIG.get()).clone();
-        tls_client_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_client_config));
-        let mut parts = authority_str.split(':');
-        let host = parts.next().unwrap_or(&authority_str);
-        let domain = ServerName::try_from(host)
-            .map_err(|e| {
-                tracing::warn!("dns lookup error: {e:?}");
-                dns_error("invalid dns name".to_string(), 0)
-            })?
-            .to_owned();
-        let stream = connector.connect(domain, tcp_stream).await.map_err(|e| {
-            tracing::warn!("tls protocol error: {e:?}");
-            ErrorCode::TlsProtocolError
-        })?;
-
-        Ok(TokioIo::new(RustlsStream(stream)))
-    }
-}
-
-impl Service<Uri> for HttpsConnector {
-    type Response = TokioIo<RustlsStream>;
-    type Error = ErrorCode;
-    type Future = Pin<Box<dyn Future<Output = Result<TokioIo<RustlsStream>, ErrorCode>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, uri: Uri) -> Self::Future {
-        Box::pin(async move { Self::connect(uri).await })
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn send_request_impl(
-    mut request: Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
-    mut config: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    outbound_allowed_hosts: OutboundAllowedHosts,
-    component_tls_configs: ComponentTlsClientConfigs,
-    request_interceptor: Option<Arc<dyn OutboundHttpInterceptor>>,
-    self_request_origin: Option<SelfRequestOrigin>,
-    blocked_networks: BlockedNetworks,
-    http_clients: HttpClients,
-) -> anyhow::Result<Result<IncomingResponse, ErrorCode>> {
-    // wasmtime-wasi-http fills in scheme and authority for relative URLs
-    // (e.g. https://:443/<path>), which makes them hard to reason about.
-    // Undo that here.
-    let uri = request.uri_mut();
-    if uri
-        .authority()
-        .is_some_and(|authority| authority.host().is_empty())
-    {
-        let mut builder = http::uri::Builder::new();
-        if let Some(paq) = uri.path_and_query() {
-            builder = builder.path_and_query(paq.clone());
-        }
-        *uri = builder.build().unwrap();
-    }
-    let span = tracing::Span::current();
-    span.record("url.full", uri.to_string());
-
-    spin_telemetry::inject_trace_context(&mut request);
-
-    let host = request.uri().host().unwrap_or_default();
-    let tls_client_config = component_tls_configs.get_client_config(host).clone();
-
-    let is_self_request = request
-        .uri()
-        .authority()
-        .is_some_and(|a| a.host() == "self.alt");
-
-    if request.uri().authority().is_some() && !is_self_request {
-        // Absolute URI
-        let is_allowed = outbound_allowed_hosts
-            .check_url(&request.uri().to_string(), "https")
-            .await
-            .unwrap_or(false);
-        if !is_allowed {
-            return Ok(Err(ErrorCode::HttpRequestDenied));
-        }
-    } else {
-        // Relative URI ("self" request)
-        let is_allowed = outbound_allowed_hosts
-            .check_relative_url(&["http", "https"])
-            .await
-            .unwrap_or(false);
-        if !is_allowed {
-            return Ok(Err(ErrorCode::HttpRequestDenied));
-        }
-
-        let Some(origin) = self_request_origin else {
-            tracing::error!("Couldn't handle outbound HTTP request to relative URI; no origin set");
-            return Ok(Err(ErrorCode::HttpRequestUriInvalid));
-        };
-
-        config.use_tls = origin.use_tls();
-
-        request.headers_mut().insert(HOST, origin.host_header());
-
-        let path_and_query = request.uri().path_and_query().cloned();
-        *request.uri_mut() = origin.into_uri(path_and_query);
-    }
-
-    // Some servers (looking at you nginx) don't like a host header even though
-    // http/2 allows it: https://github.com/hyperium/hyper/issues/3298.
-    //
-    // Note that we do this _before_ invoking the request interceptor.  It may
-    // decide to add the `host` header back in, regardless of the nginx bug, in
-    // which case we'll let it do so without interferring.
-    request.headers_mut().remove(HOST);
-
-    if let Some(interceptor) = request_interceptor {
-        let intercept_request = std::mem::take(&mut request).into();
-        match interceptor.intercept(intercept_request).await? {
-            InterceptOutcome::Continue(req) => {
-                request = req.into_hyper_request();
-            }
-            InterceptOutcome::Complete(resp) => {
-                let resp = IncomingResponse {
-                    resp,
-                    worker: None,
-                    between_bytes_timeout: config.between_bytes_timeout,
-                };
-                return Ok(Ok(resp));
-            }
-        }
-    }
-
-    let authority = request.uri().authority().context("authority not set")?;
-    span.record("server.address", authority.host());
-    if let Some(port) = authority.port() {
-        span.record("server.port", port.as_u16());
-    }
-
-    Ok(send_request_handler(
-        request,
-        config,
-        tls_client_config,
-        blocked_networks,
-        http_clients,
-    )
-    .await)
-}
-
-async fn send_request_handler(
-    request: http::Request<HyperOutgoingBody>,
-    wasmtime_wasi_http::types::OutgoingRequestConfig {
-        use_tls,
-        connect_timeout,
-        first_byte_timeout,
-        between_bytes_timeout,
-    }: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    tls_client_config: TlsClientConfig,
-    blocked_networks: BlockedNetworks,
-    http_clients: HttpClients,
-) -> Result<wasmtime_wasi_http::types::IncomingResponse, ErrorCode> {
-    let resp = CONNECT_OPTIONS.scope(
-        ConnectOptions {
-            blocked_networks,
-            connect_timeout,
-        },
-        async move {
-            if use_tls {
-                TLS_CLIENT_CONFIG
-                    .scope(tls_client_config, async move {
-                        http_clients.https.request(request).await
-                    })
-                    .await
-            } else {
-                let use_http2 =
-                    std::env::var_os("SPIN_OUTBOUND_H2C_PRIOR_KNOWLEDGE").is_some_and(|v| {
-                        request
-                            .uri()
-                            .authority()
-                            .is_some_and(|authority| authority.as_str() == v)
-                    });
-
-                if use_http2 {
-                    http_clients.http2.request(request).await
-                } else {
-                    http_clients.http1.request(request).await
-                }
-            }
-        },
-    );
-
-    let resp = timeout(first_byte_timeout, resp)
-        .await
-        .map_err(|_| ErrorCode::ConnectionReadTimeout)?
-        .map_err(hyper_legacy_request_error)?
-        .map(|body| body.map_err(hyper_request_error).boxed());
-
-    tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
-
-    Ok(wasmtime_wasi_http::types::IncomingResponse {
-        resp,
-        worker: None,
-        between_bytes_timeout,
-    })
 }
 
 /// Translate a [`hyper::Error`] to a wasi-http `ErrorCode` in the context of a request.
