@@ -25,6 +25,7 @@ use spin_factors::{
 use wasmtime_wasi_http::WasiHttpCtx;
 
 pub use wasmtime_wasi_http::{
+    bindings::http::types::ErrorCode,
     body::HyperOutgoingBody,
     types::{HostFutureIncomingResponse, OutgoingRequestConfig},
     HttpResult,
